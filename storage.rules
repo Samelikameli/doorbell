@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// Craft rules based on data in your Firestore database
+// allow write: if firestore.get(
+//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+    	let settingsDoc = firestore.get(/databases/(default)/documents/settings/settings);
+			return request.auth != null
+				&& request.auth.token.email != null
+				&& (request.auth.token.email in settingsDoc.data.adminEmails);
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
