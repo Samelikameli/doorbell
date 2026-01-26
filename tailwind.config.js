@@ -4,7 +4,7 @@ import { heroui } from "@heroui/theme";
 /** @type {import('tailwindcss').Config} */
 export const content = [
   "./src/**/*.{js,ts,jsx,tsx,mdx}",
-  "./node_modules/@heroui/theme/dist/components/(autocomplete|alert|button|calendar|checkbox|form|input|modal|pagination|progress|radio|skeleton|spinner|table|ripple|listbox|divider|popover|scroll-shadow|spacer).js"
+  "./node_modules/@heroui/theme/dist/components/(autocomplete|alert|button|calendar|checkbox|date-input|date-picker|form|input|modal|pagination|progress|radio|select|skeleton|spinner|table|ripple|listbox|divider|popover|scroll-shadow|spacer).js"
 ];
 export const theme = {
   extend: {},

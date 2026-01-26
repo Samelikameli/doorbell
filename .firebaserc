@@ -1,10 +1,5 @@
 {
   "projects": {
-    "prod": "laskulomake",
-    "dev": "laskulomake-dev",
-    "generic": "laskutuslomake-generic",
-    "default": "laskulomake-dev"
-  },
-  "targets": {},
-  "etags": {}
+    "default": "puheenvuorot"
+  }
 }
