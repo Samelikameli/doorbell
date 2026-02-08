@@ -12,9 +12,7 @@ export function CompletedSpeech({ speech, speechType, isMeetingAdmin, userName }
         <div className="flex flex-row border border-border rounded p-2 mb-2">
             <div className="flex flex-col">
                 <p>{speech.ordinal}. <strong>{speech.speakerName}</strong> - {speechType.label}</p>
-                <p>{speech.description}</p>
-
-                <p className="text-sm text-muted">{speech.skipped ? "Ohitettu" : <span>Alkoi: {formatDate(speech.startedAt!)}, kesto: {formatDuration(duration!)}</span>}</p>
+                <p>{speech.description} <span className="text-sm text-muted">{speech.skipped ? "Ohitettu" : <span>Alkoi: {formatDate(speech.startedAt!)}, kesto: {formatDuration(duration!)}</span>}</span></p>
             </div>
         </div>
     );

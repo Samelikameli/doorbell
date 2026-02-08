@@ -34,10 +34,32 @@ export interface Proposal {
     description: string;
     createdAt: Date;
     id: string;
+    supporterUids?: string[]
 }
 
-export interface VotingSession {
+export type StoredVoteOption =
+  | { id: string; type: "PROPOSAL"; proposalId: string; label?: string }
+  | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
 
+export type HydratedVoteOption =
+  | { id: string; type: "PROPOSAL"; proposalId: string; proposal: Proposal; label?: string }
+  | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
+
+export interface VotingSession {
+  votingSessionId: string;
+  meetingCode: string;
+  voteOptions: HydratedVoteOption[]; // hydrated in UI
+  votes: Vote[];
+  type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
+  open: boolean;
+  createdAt: Date;
+}
+
+export interface Vote {
+    votingSessionId: string;
+    voterUid: string;
+    voteOptionId: string;
+    createdAt: Date;
 }
 
 export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy">;

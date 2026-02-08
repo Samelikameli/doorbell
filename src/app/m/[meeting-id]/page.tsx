@@ -1,16 +1,14 @@
 "use client";
 
-//import { useUser } from "@/context/UserContext";
-import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 
-import { use, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useUser } from "@/context/UserContext";
 import { Input } from "@heroui/input";
 import { Button } from "@heroui/button";
 import { db } from "@/firebase";
-import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "@firebase/firestore";
-import { Meeting, Speech, SpeechCreateRequest, SpeechType } from "@/types";
+import { collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, updateDoc } from "@firebase/firestore";
+import { Meeting, Proposal, SpeechCreateRequest, SpeechType } from "@/types";
 import { Form, Select, SelectItem, useDisclosure } from "@heroui/react";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import { functions } from "@/firebase";
@@ -18,14 +16,21 @@ import { httpsCallable } from "firebase/functions";
 import { UpcomingSpeech } from "@/components/UpcomingSpeech";
 import { CompletedSpeech } from "@/components/CompletedSpeech";
 import { formatDate, formatDuration } from "@/utils";
+import { ProposalCard } from "@/components/Proposal";
+import { useSpeeches } from "@/hooks/useSpeeches";
+import { useProposals } from "@/hooks/useProposals";
+import { usePresenceWithHistory } from "@/hooks/usePresenceWithHistory";
+import { useOnlineNow } from "@/hooks/useOnlineNow";
+import { useVotingSessions } from "@/hooks/useVotingSessions";
+
 export default function MeetingPage() {
-    const router = useRouter();
 
     const { user, loading } = useUser();
     const params = useParams();
 
     const { isOpen: isProposalFormOpen, onOpen: onProposalFormOpen, onOpenChange: onProposalFormOpenChange } = useDisclosure();
 
+    const [selectedTab, setSelectedTab] = useState<"SPEECHES" | "VOTING">("SPEECHES");
 
     const descriptionRef = useRef<HTMLInputElement | null>(null);
     const nameInputRef = useRef<HTMLInputElement | null>(null);
@@ -37,11 +42,9 @@ export default function MeetingPage() {
 
     const [nowMs, setNowMs] = useState(() => Date.now());
 
-    const [ownOngoing, setOwnOngoing] = useState(false);
+    const { openProposals } = useProposals(meeting?.code);
 
-    const [upcomingSpeeches, setUpcomingSpeeches] = useState<Speech[]>([]);
-    const [ongoingSpeeches, setOngoingSpeeches] = useState<Speech[]>([]);
-    const [completedSpeeches, setCompletedSpeeches] = useState<Speech[]>([]);
+    const { openVotingSessions, completedVotingSessions, loading: votingSessionsLoading, error: votingSessionsError } = useVotingSessions(meeting?.code);
 
     const [userNameInput, setUserNameInput] = useState("");
     const [userName, setUserName] = useState("");
@@ -52,6 +55,61 @@ export default function MeetingPage() {
 
     const [speechDescriptionInput, setSpeechDescriptionInput] = useState("");
     const [speechTypeInput, setSpeechTypeInput] = useState(new Set<string | null>(null));
+
+    const [proposalDescriptionInput, setProposalDescriptionInput] = useState("");
+
+    const { upcomingSpeeches, ongoingSpeeches, completedSpeeches } = useSpeeches(meeting?.code);
+
+    const ownOngoing = ongoingSpeeches.length > 0 && ongoingSpeeches[0].speakerName === userName;
+
+    const { online } = useOnlineNow(meeting?.code, 60_000);
+
+    const [selectedProposalIds, setSelectedProposalIds] = useState<Set<string>>(() => new Set());
+
+    const toggleSelected = (proposalId: string, selected: boolean) => {
+        setSelectedProposalIds((prev) => {
+            const next = new Set(prev);
+            if (selected) next.add(proposalId);
+            else next.delete(proposalId);
+            return next;
+        });
+    };
+
+    const clearProposalsForVotingSessionSelection = () => setSelectedProposalIds(new Set());
+
+    useEffect(() => {
+        const openIds = new Set(openProposals.map((p) => p.id));
+        setSelectedProposalIds((prev) => {
+            let changed = false;
+            const next = new Set<string>();
+            prev.forEach((id) => {
+                if (openIds.has(id)) next.add(id);
+                else changed = true;
+            });
+            return changed ? next : prev;
+        });
+    }, [openProposals]);
+
+
+    usePresenceWithHistory({
+        meetingCode: meeting?.code,
+        enabled: userName !== "",
+        name: userName,
+        uid: user?.uid ?? null,
+        heartbeatMs: 50_000,
+    });
+
+
+    useEffect(() => {
+        if (!code) {
+            return;
+        }
+        const saved = localStorage.getItem(`name:${code}`);
+        if (saved) {
+            setUserNameInput(saved);
+        }
+    }, [code]);
+
 
     useEffect(() => {
         // select the name input field on load
@@ -151,74 +209,9 @@ export default function MeetingPage() {
 
     useEffect(() => {
         console.log("Speech types for meeting updated:", speechTypesForMeeting);
-        setSpeechTypeInput(new Set<string>(speechTypesForMeeting && speechTypesForMeeting.length > 0 ? [speechTypesForMeeting[0].id] : []));
+        setSpeechTypeInput(new Set(speechTypesForMeeting?.[0]?.id ? [speechTypesForMeeting[0].id] : []));
     }, [speechTypesForMeeting]);
 
-    useEffect(() => {
-        if (meeting !== null) {
-            const q = query(collection(db, "meetings", meeting.code, "speeches"), where("completed", "==", false), where("started", "==", false), orderBy("priority"), orderBy("createdAt", "asc"));
-            const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, querySnapshot => {
-                const speechesData: Speech[] = [];
-                querySnapshot.forEach(doc => {
-                    const data = doc.data({ serverTimestamps: "estimate" });
-                    speechesData.push({
-                        ...data,
-                        id: doc.id,
-                        createdAt: data.createdAt.toDate(),
-                        startedAt: data.startedAt ? data.startedAt.toDate() : null,
-                        completedAt: data.completedAt ? data.completedAt.toDate() : null
-                    } as Speech);
-                });
-                console.log("Fetched upcoming speeches:", speechesData);
-                setUpcomingSpeeches(speechesData);
-            });
-            return () => unsubscribe();
-        }
-    }, [meeting]);
-
-    useEffect(() => {
-        if (meeting !== null) {
-            const q = query(collection(db, "meetings", meeting.code, "speeches"), where("completed", "==", false), where("started", "==", true), orderBy("startedAt", "desc"));
-            const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, querySnapshot => {
-                const speechesData: Speech[] = [];
-                querySnapshot.forEach(doc => {
-                    const data = doc.data({ serverTimestamps: "estimate" });
-                    speechesData.push({
-                        ...data,
-                        id: doc.id,
-                        createdAt: data.createdAt.toDate(),
-                        startedAt: data.startedAt ? data.startedAt.toDate() : null,
-                        completedAt: data.completedAt ? data.completedAt.toDate() : null
-                    } as Speech);
-                });
-                console.log("Fetched ongoing speeches:", speechesData); // there should always be only one ongoing speech
-                setOngoingSpeeches(speechesData);
-            });
-            return () => unsubscribe();
-        }
-    }, [meeting]);
-
-    useEffect(() => {
-        if (meeting !== null) {
-            const q = query(collection(db, "meetings", meeting.code, "speeches"), where("completed", "==", true), orderBy("completedAt", "desc"), limit(50));
-            const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, querySnapshot => {
-                const speechesData: Speech[] = [];
-                querySnapshot.forEach(doc => {
-                    const data = doc.data({ serverTimestamps: "estimate" });
-                    speechesData.push({
-                        ...data,
-                        id: doc.id,
-                        createdAt: data.createdAt.toDate(),
-                        startedAt: data.startedAt ? data.startedAt.toDate() : null,
-                        completedAt: data.completedAt ? data.completedAt.toDate() : null
-                    } as Speech);
-                });
-                console.log("Fetched completed speeches:", speechesData);
-                setCompletedSpeeches(speechesData);
-            });
-            return () => unsubscribe();
-        }
-    }, [meeting]);
 
     useEffect(() => {
         if (!userName) return;
@@ -251,23 +244,13 @@ export default function MeetingPage() {
     }, [user, loading, meeting]);
 
     useEffect(() => {
-        if (ongoingSpeeches.length === 0) return;
+        const activeId = ongoingSpeeches[0]?.id;
+        if (!activeId) return;
 
         setNowMs(Date.now());
         const id = window.setInterval(() => setNowMs(Date.now()), 100);
-
         return () => window.clearInterval(id);
-    }, [ongoingSpeeches.length, ongoingSpeeches[0]?.id]);
-
-    useEffect(() => {
-        if (ongoingSpeeches.length === 0) {
-            setOwnOngoing(false);
-            return;
-        }
-        const ownOngoing = ongoingSpeeches[0].speakerName === userName;
-        setOwnOngoing(ownOngoing);
-    }, [ongoingSpeeches, userName]);
-
+    }, [ongoingSpeeches[0]?.id]);
 
     const getSpeechTypeById = (id: string): SpeechType => {
         if (!speechTypesForMeeting) return { id: id, label: id, priority: 1000, icon: "" };
@@ -276,15 +259,14 @@ export default function MeetingPage() {
     }
 
     const handleJoinWithName = (e: React.FormEvent) => {
-        try {
-            if (e) {
-                e.preventDefault();
-            }
-            setUserName(userNameInput);
-        } catch (error) {
-            console.error("Error setting user name:", error);
-        }
-    }
+        e.preventDefault();
+
+        const trimmed = userNameInput.trim();
+        if (!trimmed) return;
+
+        setUserName(trimmed);
+        localStorage.setItem(`name:${code}`, trimmed);
+    };
 
     const handleAddSpeech = async (e: React.FormEvent) => {
         try {
@@ -300,7 +282,7 @@ export default function MeetingPage() {
             const result = await createSpeech({
                 meetingCode: meeting.code,
                 description: speechDescriptionInput,
-                type: Array.from(speechTypeInput)[0], // always single select
+                type: Array.from(speechTypeInput)[0],
                 speakerName: userName,
             } as SpeechCreateRequest);
             console.log("Speech added:", result.data);
@@ -391,170 +373,479 @@ export default function MeetingPage() {
         handleStartSpeech(nextSpeechId);
     };
 
+    const isSupportedByMe = (proposal: Proposal) => {
+        if (!user?.uid) return false;
+        return (proposal.supporterUids ?? []).includes(user.uid);
+    };
+
+    const handleAddProposal = async (onClose: () => void) => {
+        try {
+            if (!meeting) return;
+            console.log("Adding proposal:", proposalDescriptionInput, "by user:", userName);
+            const addProposal = httpsCallable(functions, 'createProposal');
+            const result = await addProposal({
+                meetingCode: meeting.code,
+                description: proposalDescriptionInput,
+                proposerName: userName,
+            });
+
+            console.log("Proposal added:", result.data);
+            // clear input
+            setProposalDescriptionInput("");
+            onClose();
+        } catch (error) {
+            console.error("Error adding proposal:", error);
+        }
+    }
+
+    const handleCreateVotingSession = async () => {
+        // take selected proposals and create a voting session with them
+        const proposalIds = Array.from(selectedProposalIds);
+        if (proposalIds.length === 0) return;
+        try {
+            if (!meeting) return;
+            console.log("Creating voting session for proposals:", proposalIds, "by user:", userName);
+            const createVotingSession = httpsCallable(functions, 'createVotingSession');
+            const result = await createVotingSession({
+                meetingCode: meeting.code,
+                proposalIds,
+            });
+
+            console.log("Voting session created:", result.data);
+            clearProposalsForVotingSessionSelection();
+        } catch (error) {
+            console.error("Error creating voting session:", error);
+        }
+    };
+
+    const handleCloseProposal = async (proposalId: string) => {
+        if (!meeting) return;
+        try {
+            const fn = httpsCallable(functions, "closeProposal");
+            await fn({ meetingCode: meeting.code, proposalId });
+        } catch (e) {
+            console.error("Error closing proposal:", e);
+        }
+    };
+
+    const handleToggleSupport = async (proposalId: string) => {
+        if (!meeting) return;
+        try {
+            const fn = httpsCallable(functions, "toggleProposalSupport");
+            await fn({
+                meetingCode: meeting.code,
+                proposalId,
+                supporterName: userName,
+            });
+        } catch (e) {
+            console.error("Error toggling support:", e);
+        }
+    };
+
+    const handleCastVote = async (votingSessionId: string, voteOptionId: string) => {
+        if (!meeting) return;
+
+        try {
+            const fn = httpsCallable(functions, "castVote");
+
+            if (user?.uid) {
+                await fn({ meetingCode: meeting.code, votingSessionId, voteOptionId });
+                return;
+            }
+
+            const voterId = userName;
+            await fn({
+                meetingCode: meeting.code,
+                votingSessionId,
+                voteOptionId,
+                voterId,
+                voterName: userName,
+            });
+        } catch (e: any) {
+            console.error("Error casting vote:", e);
+        }
+    };
+    const loginScreen = (
+        <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">
+            <Form onSubmit={handleJoinWithName} validationBehavior="native"
+                className={'flex justify-center items-left flex-col w-full text-foreground bg-background min-h-screen gap-4 w-3/4 lg:w-1/4'}
+            >
+                <h2 className="text-2xl lg:text-3xl font-semibold">Syötä nimesi ennen kokoukseen liittymistä</h2>
+                <Input
+                    label="Nimesi"
+                    placeholder="Anna nimesi"
+                    value={userNameInput}
+                    ref={nameInputRef}
+                    isRequired
+                    onChange={(e) => setUserNameInput(e.target.value)}
+                />
+                <Button
+                    type="submit"
+                >
+                    Jatka kokoukseen
+                </Button>
+            </Form>
+        </div>
+    );
+
+    const speechesTab = <div className="flex-1 min-h-0 lg:overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-3 h-full">
+            {/* Column 1 */}
+            <div className="flex flex-col min-h-0 border border-border lg:overflow-hidden">
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Tulevat puheenvuorot {upcomingSpeeches.length}
+                </h3>
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {upcomingSpeeches.map((speech) => (
+                        <UpcomingSpeech key={speech.id}
+                            speech={speech}
+                            isMeetingAdmin={isMeetingAdmin}
+                            speechType={getSpeechTypeById(speech.type)}
+                            userName={userName}
+                            actions={[
+                                {
+                                    label: "Ohita",
+                                    onPress: () => handleSkipSpeech(speech.id),
+                                },
+                                {
+                                    label: "Aloita ja lopeta käynnissä oleva",
+                                    onPress: () => {
+                                        handleCompleteOngoingAndStartThis(speech.id);
+                                    },
+                                },
+                                {
+                                    label: "Aloita käynnissä olevan päälle",
+                                    onPress: () => handleStartSpeech(speech.id),
+                                },
+                            ]}
+                            skipAction={() => handleSkipSpeech(speech.id)}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            {/* Column 2 */}
+            <div className={`flex flex-col min-h-0 border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Käynnissä oleva puheenvuoro
+                </h3>
+                {ongoingSpeeches.length > 0 && (
+                    <div className="flex flex-row border border-border p-2 mb-2">
+                        <div className="flex flex-col">
+                            <p>Puhuja: <strong>{ongoingSpeeches[0].speakerName}</strong></p>
+                            <p>Aihe: {ongoingSpeeches[0].description}</p>
+                            <p>Kokouksen {ongoingSpeeches[0].ordinal}. puheenvuoro</p>
+                            <p className="text-sm text-muted">
+                                Alkoi {formatDate(ongoingSpeeches[0].startedAt!)}, kesto{" "}
+                                {formatDuration(
+                                    Math.max(
+                                        0,
+                                        Math.floor((nowMs - ongoingSpeeches[0].startedAt!.getTime()) / 1000)
+                                    )
+                                )}
+                            </p>
+                        </div>
+                        {isMeetingAdmin && (
+                            <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
+                                <Button
+                                    onPress={() => {
+                                        handleCompleteOngoingAndStartNext();
+                                    }}
+                                >Lopeta ja aloita seuraava</Button>
+                                <Button
+                                    onPress={() => handleCompleteSpeech(ongoingSpeeches[0].id)}
+                                > Lopeta</Button>
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {ongoingSpeeches.slice(1).map((speech) => (
+                        <div key={speech.id} className="flex flex-row border border-border p-2 mb-2">
+                            <div className="flex flex-col">
+
+                                <p><strong>{speech.speakerName}</strong></p>
+                                <p>{speech.description}</p>
+                                <p className="text-sm text-muted">Aika: {speech.createdAt.toLocaleString()}</p>
+                            </div>
+                            {isMeetingAdmin && (
+                                <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
+                                    <Button
+                                        onPress={() => {
+
+                                            handleCompleteSpeech(speech.id);
+                                            if (upcomingSpeeches.length > 0 && ongoingSpeeches.length === 1) {
+                                                handleStartSpeech(upcomingSpeeches[0].id);
+                                            }
+                                        }}
+                                    >Lopeta ja aloita seuraava</Button>
+                                    <Button
+                                        onPress={() => handleCompleteSpeech(speech.id)}
+                                    > Lopeta</Button>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                <div className="flex flex-1 flex-col min-h-0 border border-border  overflow-hidden">
+                    <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                        Menneet puheenvuorot
+                    </h3>
+                    <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                        <ul>
+                            {completedSpeeches.map((speech) => (
+                                <CompletedSpeech key={speech.id}
+                                    speech={speech}
+                                    isMeetingAdmin={isMeetingAdmin}
+                                    speechType={getSpeechTypeById(speech.type)}
+                                    userName={userName}
+                                />
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+                {isMeetingAdmin && (
+                    <div className="m-4 p-3 border border-border rounded">
+                        <div className="font-semibold">Online now ({online.length})</div>
+                        <ul className="mt-2 space-y-1 text-sm">
+                            {online.map((u) => (
+                                <li key={u.sessionId}>
+                                    {u.name}{" "}
+                                    <span className="opacity-60">
+                                        ({Math.round((Date.now() - u.lastSeenMs) / 1000)}s ago)
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+            </div>
+
+            {/* Column 3 */}
+            <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Ehdotukset ja päätöksenteko
+                </h3>
+                {/* open modal with button */}
+                <Button className="m-4"
+                    onPress={onProposalFormOpen}>
+                    Tee ehdotus
+                </Button>
+                {/* List of open proposals */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {openProposals.map((proposal) => (
+                        <ProposalCard
+                            key={proposal.id}
+                            proposal={proposal}
+                            isMeetingAdmin={isMeetingAdmin}
+                            selectedForDecision={selectedProposalIds.has(proposal.id)}
+                            onToggleSelectedForDecision={toggleSelected}
+                            onSupportToggle={handleToggleSupport}
+                            isSupportedByMe={isSupportedByMe(proposal)}
+                            supportCount={proposal.supporterUids?.length ?? 0}
+                            onClose={handleCloseProposal}
+                        />
+                    ))}
+                </div>
+                {isMeetingAdmin && selectedProposalIds.size > 0 && (
+                    <div className="p-3 border-t border-border">
+                        <Button onPress={handleCreateVotingSession}>
+                            Avaa äänestys näistä ehdotuksista ({selectedProposalIds.size})
+                        </Button>
+                    </div>
+                )}
+            </div>
+        </div>
+    </div>;
+
+    const votingTab = <div className="flex-1 min-h-0 lg:overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-3 h-full">
+            {/* Column 1 */}
+            <div className="flex flex-col min-h-0 border border-border lg:overflow-hidden">
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Tulevat puheenvuorot {upcomingSpeeches.length}
+                </h3>
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {upcomingSpeeches.map((speech) => (
+                        <UpcomingSpeech key={speech.id}
+                            speech={speech}
+                            isMeetingAdmin={isMeetingAdmin}
+                            speechType={getSpeechTypeById(speech.type)}
+                            userName={userName}
+                            actions={[
+                                {
+                                    label: "Ohita",
+                                    onPress: () => handleSkipSpeech(speech.id),
+                                },
+                                {
+                                    label: "Aloita ja lopeta käynnissä oleva",
+                                    onPress: () => {
+                                        handleCompleteOngoingAndStartThis(speech.id);
+                                    },
+                                },
+                                {
+                                    label: "Aloita käynnissä olevan päälle",
+                                    onPress: () => handleStartSpeech(speech.id),
+                                },
+                            ]}
+                            skipAction={() => handleSkipSpeech(speech.id)}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            {/* Column 2 */}
+            <div className={`flex flex-col min-h-0 border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Käynnissä oleva puheenvuoro
+                </h3>
+                {ongoingSpeeches.length > 0 && (
+                    <div className="flex flex-row border border-border p-2 mb-2">
+                        <div className="flex flex-col">
+                            <p>Puhuja: <strong>{ongoingSpeeches[0].speakerName}</strong></p>
+                            <p>Aihe: {ongoingSpeeches[0].description}</p>
+                            <p>Kokouksen {ongoingSpeeches[0].ordinal}. puheenvuoro</p>
+                            <p className="text-sm text-muted">
+                                Alkoi {formatDate(ongoingSpeeches[0].startedAt!)}, kesto{" "}
+                                {formatDuration(
+                                    Math.max(
+                                        0,
+                                        Math.floor((nowMs - ongoingSpeeches[0].startedAt!.getTime()) / 1000)
+                                    )
+                                )}
+                            </p>
+                        </div>
+                        {isMeetingAdmin && (
+                            <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
+                                <Button
+                                    onPress={() => {
+                                        handleCompleteOngoingAndStartNext();
+                                    }}
+                                >Lopeta ja aloita seuraava</Button>
+                                <Button
+                                    onPress={() => handleCompleteSpeech(ongoingSpeeches[0].id)}
+                                > Lopeta</Button>
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+
+                </div>
+                <div className="flex flex-1 flex-col min-h-0 border border-border  overflow-hidden">
+                    <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                        Menneet puheenvuorot
+                    </h3>
+                    <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                        <ul>
+                            {completedSpeeches.map((speech) => (
+                                <CompletedSpeech key={speech.id}
+                                    speech={speech}
+                                    isMeetingAdmin={isMeetingAdmin}
+                                    speechType={getSpeechTypeById(speech.type)}
+                                    userName={userName}
+                                />
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            {/* Column 3 */}
+            <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
+                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                    Äänestys
+                </h3>
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {openVotingSessions.map((session) => {
+                        const voterKey = userName;
+                        const myVote = session.votes.find((v) => v.voterUid === voterKey);
+                        const hasVoted = !!myVote;
+
+                        return (
+                            <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
+                                <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}</p>
+
+                                {hasVoted && (
+                                    <p className="text-sm mt-2">
+                                        Olet jo äänestänyt.
+                                    </p>
+                                )}
+
+                                <ul className="mt-2 space-y-2">
+                                    {session.voteOptions.map((option) => {
+                                        const label =
+                                            option.type === "PROPOSAL"
+                                                ? option.proposal.description
+                                                : option.label ?? option.vote;
+
+                                        const selected = myVote?.voteOptionId === option.id;
+
+                                        return (
+                                            <li key={option.id} className="flex items-center justify-between gap-3">
+                                                <span className={selected ? "font-semibold" : ""}>{label}</span>
+                                                <Button
+                                                    size="sm"
+                                                    variant={selected ? "solid" : "light"}
+                                                    isDisabled={hasVoted}
+                                                    onPress={() => handleCastVote(session.votingSessionId, option.id)}
+                                                >
+                                                    {selected ? "Valittu" : "Äänestä"}
+                                                </Button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+
+                                <div className="mt-3 text-sm opacity-70">Ääniä: {session.votes.length}</div>
+                            </div>
+                        );
+                    })}
+
+
+                    {votingSessionsLoading && <p>Ladataan äänestysistuntoja...</p>}
+                    <p>Open sessions: {openVotingSessions.length}</p>
+                    {votingSessionsError && <pre>{String(votingSessionsError.message)}</pre>}
+
+                </div>
+            </div>
+        </div>
+    </div>;
+
+    const content = selectedTab === "SPEECHES" ? speechesTab : votingTab;
+
     // first require user to give their name before showing the meeting page
     return (
-        userName === "" ?
-            (
-                <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">
-                    <Form onSubmit={handleJoinWithName} validationBehavior="native"
-                        className={'flex justify-center items-left flex-col w-full text-foreground bg-background min-h-screen gap-4 w-3/4 lg:w-1/4'}
-                    >
-                        <h2 className="text-2xl lg:text-3xl font-semibold">Syötä nimesi ennen kokoukseen liittymistä</h2>
-                        <Input
-                            label="Nimesi"
-                            placeholder="Anna nimesi"
-                            value={userNameInput}
-                            ref={nameInputRef}
-                            isRequired
-                            onChange={(e) => setUserNameInput(e.target.value)}
-                        />
-                        <Button
-                            type="submit"
-                        >
-                            Jatka kokoukseen
-                        </Button>
-                    </Form>
-                </div>
-            )
+        userName === "" ? loginScreen
             : (
                 <div className="min-h-screen h-screen flex flex-col bg-background text-foreground lg:overflow-hidden">
                     {/* Header */}
-                    <div className="px-4 py-3 border-b border-border shrink-0">
-                        {meeting?.code}
-                    </div>
-
-                    {/* Main: fills remaining height, does NOT scroll */}
-                    <div className="flex-1 min-h-0 lg:overflow-hidden">
-                        <div className="grid grid-cols-1 lg:grid-cols-3 h-full">
-                            {/* Column 1 */}
-                            <div className="flex flex-col min-h-0 border border-border lg:overflow-hidden">
-                                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                                    Tulevat puheenvuorot {upcomingSpeeches.length}
-                                </h3>
-                                <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                                    {upcomingSpeeches.map((speech, index) => (
-                                        <UpcomingSpeech key={index}
-                                            speech={speech}
-                                            isMeetingAdmin={isMeetingAdmin}
-                                            speechType={getSpeechTypeById(speech.type)}
-                                            userName={userName}
-                                            actions={[
-                                                {
-                                                    label: "Ohita",
-                                                    onPress: () => handleSkipSpeech(speech.id),
-                                                },
-                                                {
-                                                    label: "Aloita ja lopeta käynnissä oleva",
-                                                    onPress: () => {
-                                                        handleCompleteOngoingAndStartThis(speech.id);
-                                                    },
-                                                },
-                                                {
-                                                    label: "Aloita käynnissä olevan päälle",
-                                                    onPress: () => handleStartSpeech(speech.id),
-                                                },
-                                            ]}
-                                            skipAction={() => handleSkipSpeech(speech.id)}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Column 2 */}
-                            <div className={`flex flex-col min-h-0 border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
-                                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                                    Käynnissä oleva puheenvuoro
-                                </h3>
-                                {ongoingSpeeches.length > 0 && (
-                                    <div className="flex flex-row border border-border p-2 mb-2">
-                                        <div className="flex flex-col">
-                                            <p>Puhuja: <strong>{ongoingSpeeches[0].speakerName}</strong></p>
-                                            <p>Aihe: {ongoingSpeeches[0].description}</p>
-                                            <p>Kokouksen {ongoingSpeeches[0].ordinal}. puheenvuoro</p>
-                                            <p className="text-sm text-muted">
-                                                Alkoi {formatDate(ongoingSpeeches[0].startedAt!)}, kesto{" "}
-                                                {formatDuration(
-                                                    Math.max(
-                                                        0,
-                                                        Math.floor((nowMs - ongoingSpeeches[0].startedAt!.getTime()) / 1000)
-                                                    )
-                                                )}
-                                            </p>
-                                        </div>
-                                        {isMeetingAdmin && (
-                                            <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
-                                                <Button
-                                                    onPress={() => {
-                                                        handleCompleteOngoingAndStartNext();
-                                                    }}
-                                                >Lopeta ja aloita seuraava</Button>
-                                                <Button
-                                                    onPress={() => handleCompleteSpeech(ongoingSpeeches[0].id)}
-                                                > Lopeta</Button>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                                <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                                    {ongoingSpeeches.slice(1).map((speech, index) => (
-                                        <div key={index} className="flex flex-row border border-border p-2 mb-2">
-                                            <div className="flex flex-col">
-
-                                                <p><strong>{speech.speakerName}</strong></p>
-                                                <p>{speech.description}</p>
-                                                <p className="text-sm text-muted">Aika: {speech.createdAt.toLocaleString()}</p>
-                                            </div>
-                                            {isMeetingAdmin && (
-                                                <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
-                                                    <Button
-                                                        onPress={() => {
-
-                                                            handleCompleteSpeech(speech.id);
-                                                            if (upcomingSpeeches.length > 0 && ongoingSpeeches.length === 1) {
-                                                                handleStartSpeech(upcomingSpeeches[0].id);
-                                                            }
-                                                        }}
-                                                    >Lopeta ja aloita seuraava</Button>
-                                                    <Button
-                                                        onPress={() => handleCompleteSpeech(speech.id)}
-                                                    > Lopeta</Button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="flex flex-1 flex-col min-h-0 border border-border  overflow-hidden">
-                                    <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                                        Menneet puheenvuorot
-                                    </h3>
-                                    <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                                        <ul>
-                                            {completedSpeeches.map((speech, index) => (
-                                                <CompletedSpeech key={index}
-                                                    speech={speech}
-                                                    isMeetingAdmin={isMeetingAdmin}
-                                                    speechType={getSpeechTypeById(speech.type)}
-                                                    userName={userName}
-                                                />
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Column 3 */}
-                            <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
-                                <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                                    Ehdotukset ja päätöksenteko
-                                </h3>
-                                {/* open modal with button */}
-                                <Button className="m-4"
-                                    onPress={onProposalFormOpen}>
-                                    Tee ehdotus
+                    <div className="flex flex-row px-4 py-3 border-b border-border shrink-0 content-center lg:items-center lg:justify-between gap-4">
+                        <div>
+                            {meeting?.code}
+                        </div>
+                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
+                            {/** Tab selection */}
+                            <div className="flex gap-2 mt-2">
+                                <Button
+                                    variant={selectedTab === "SPEECHES" ? "solid" : "light"}
+                                    onPress={() => setSelectedTab("SPEECHES")}
+                                >
+                                    Puheenvuorot
+                                </Button>
+                                <Button
+                                    variant={selectedTab === "VOTING" ? "solid" : "light"}
+                                    onPress={() => setSelectedTab("VOTING")}
+                                >
+                                    Äänestys
                                 </Button>
                             </div>
                         </div>
                     </div>
+
+                    {/* Main: fills remaining height, does NOT scroll */}
+
+                    {content}
 
                     {/* Footer: in flow, pinned with sticky */}
                     <div className="sticky bottom-0 px-4 py-4 border-t border-border bg-background shrink-0">
@@ -594,12 +885,20 @@ export default function MeetingPage() {
                         <ModalContent>
                             {(onClose) => (
                                 <>
-                                    <ModalHeader className="flex flex-col gap-1">Modal Title</ModalHeader>
+                                    <ModalHeader className="flex flex-col gap-1">Uusi ehdotus</ModalHeader>
                                     <ModalBody>
-                                        <Form>
+                                        <Form
+                                            id="proposalForm"
+                                            onSubmit={(e) => {
+                                                e.preventDefault();
+                                                handleAddProposal(onClose);
+                                            }}
+                                        >
                                             <Input
                                                 label="Ehdotuksen sisältö"
                                                 placeholder="Kuvaa ehdotuksesi tässä..."
+                                                value={proposalDescriptionInput}
+                                                onChange={(e) => setProposalDescriptionInput(e.target.value)}
                                                 isRequired
                                                 autoFocus
                                             />
@@ -610,8 +909,9 @@ export default function MeetingPage() {
                                         <Button color="danger" variant="light" onPress={onClose}>
                                             Close
                                         </Button>
-                                        <Button color="primary" onPress={onClose}>
-                                            Action
+
+                                        <Button color="primary" type="submit" form="proposalForm">
+                                            Lisää
                                         </Button>
                                     </ModalFooter>
                                 </>
@@ -619,7 +919,6 @@ export default function MeetingPage() {
                         </ModalContent>
                     </Modal>
                 </div>
-
             )
     );
 }

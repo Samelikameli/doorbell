@@ -9,7 +9,7 @@ service cloud.firestore {
 				&& (request.auth.token.email in settingsDoc.data.adminEmails);
     }
     match /{document=**} {
-      allow read, write, update, delete: if false;
+      allow read, write: if false;
     }
     match /meetings/{meetingId} {
       function isMeetingAdmin() {
@@ -23,9 +23,8 @@ service cloud.firestore {
         return settingsDoc.data.isPublic == true;
       }
       function isMeetingParticipant() {
-        let participantDoc = get(/databases/$(database)/documents/meetings/$(meetingId)/participants/$(request.auth.uid));
         return request.auth != null
-          && participantDoc.exists();
+          && get(/databases/$(database)/documents/meetings/$(meetingId)/participants/$(request.auth.uid)).exists();
       }
 
       allow get: if true;
@@ -36,12 +35,47 @@ service cloud.firestore {
       match /speeches/{speechId} {
         allow create: if false;
         allow read: if true;
-        allow write: if isMeetingAdmin();
+        allow update: if true;
+        allow delete: if true;
       }
 
       match /speechTypes/{speechTypeId} {
-        allow read: if isMeetingPublic() || isMeetingParticipant() || isMeetingAdmin();
+        allow read: if true;
         allow write: if isMeetingAdmin();
+      }
+
+      match /proposals/{proposalId} {
+        allow read: if true;
+        allow write: if true;
+      }
+
+      match /presence/{uid} {
+        allow read, list: if isMeetingAdmin();
+        allow create, update: if true;
+      }
+
+      match /presenceEvents/{eventId} {
+        allow read, list: if isMeetingAdmin();
+        allow create: if true;
+        allow update, delete: if false;
+      }
+
+      match /votingSessions/{votingSessionId} {
+        allow read: if true;
+        allow create: if isMeetingAdmin();
+        allow update, delete: if false;
+
+        match /voteOptions/{voteOptionId} {
+          allow read: if true;
+          allow create: if isMeetingAdmin();
+          allow update, delete: if false;
+        }
+
+        match /votes/{voteId} {
+          allow read: if true;
+          allow create: if true;
+          allow update, delete: if false;
+        }
       }
     }
 
