@@ -19,19 +19,11 @@ type UseVotingSessionsResult = {
   error: Error | null;
 };
 
-type VotingSessionDoc = {
-  meetingCode: string;
-  type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
-  open: boolean;
-  createdAt?: any;
+type VotingSessionDoc = Omit<VotingSession, "votingSessionId" | "voteOptions" | "votes"> & {
   voteOptions: StoredVoteOption[];
 };
 
-type VoteDoc = {
-  voterUid: string;
-  voteOptionId: string;
-  createdAt?: any;
-};
+type VoteDoc = Omit<Vote, "votingSessionId"> & { createdAt?: any };
 
 function toDateMaybe(ts: any): Date {
   return ts?.toDate?.() ?? new Date(0);
@@ -43,6 +35,7 @@ function mapVote(sessionId: string, data: VoteDoc): Vote {
     voterUid: data.voterUid,
     voteOptionId: data.voteOptionId,
     createdAt: toDateMaybe(data.createdAt),
+    voterName: data.voterName,
   };
 }
 
@@ -86,12 +79,7 @@ function hydrateVoteOptions(
   return result;
 }
 
-type SessionBase = {
-  votingSessionId: string;
-  meetingCode: string;
-  type: VotingSession["type"];
-  open: boolean;
-  createdAt: Date;
+type SessionBase = Omit<VotingSession, "voteOptions" | "votes"> & {
   storedVoteOptions: StoredVoteOption[];
 };
 
@@ -133,6 +121,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
         createdAt: base.createdAt,
         voteOptions,
         votes,
+        votePublicity: base.votePublicity
       };
     });
 
@@ -177,6 +166,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
             open: !!data.open,
             createdAt: toDateMaybe(data.createdAt),
             storedVoteOptions: Array.isArray(data.voteOptions) ? data.voteOptions : [],
+            votePublicity: data.votePublicity ?? "PUBLIC",
           });
         });
 

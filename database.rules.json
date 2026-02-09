@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "presence": {
+      "$meetingCode": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          "$sessionId": {
+            ".validate": "newData.hasChildren(['uid','name','lastSeenAt']) && newData.child('uid').val() === auth.uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 80 && newData.child('lastSeenAt').isNumber()"
+          }
+        }
+      }
+    }
+  }
+}

@@ -65,15 +65,21 @@ service cloud.firestore {
         allow create: if isMeetingAdmin();
         allow update, delete: if false;
 
-        match /voteOptions/{voteOptionId} {
-          allow read: if true;
-          allow create: if isMeetingAdmin();
-          allow update, delete: if false;
-        }
-
         match /votes/{voteId} {
-          allow read: if true;
-          allow create: if true;
+          function parentSession() {
+            return get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
+          }
+
+          function votesArePublic() {
+            let s = parentSession();
+            return s.exists()
+              && s.data.open == false
+              && s.data.votePublicity == "PUBLIC";
+          }
+          allow read, list: if isMeetingAdmin() || votesArePublic();
+
+          allow create: if false;
+
           allow update, delete: if false;
         }
       }

@@ -24,7 +24,7 @@ export function UpcomingSpeech({ speech, speechType, isMeetingAdmin, actions, us
                     ))}
                 </div>
             )}
-            {speech.speakerName === userName && skipAction && (
+            {speech.speakerName === userName && !isMeetingAdmin && skipAction && (
                 <div className="flex flex-col ml-auto">
                     <Button onPress={skipAction}>
                         Ohita oma puheenvuoro

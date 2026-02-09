@@ -51,6 +51,7 @@ export interface VotingSession {
   voteOptions: HydratedVoteOption[]; // hydrated in UI
   votes: Vote[];
   type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
+  votePublicity: "PUBLIC" | "PRIVATE";
   open: boolean;
   createdAt: Date;
 }
@@ -58,6 +59,7 @@ export interface VotingSession {
 export interface Vote {
     votingSessionId: string;
     voterUid: string;
+    voterName: string;
     voteOptionId: string;
     createdAt: Date;
 }
