@@ -18,23 +18,30 @@ export default function FrontPage() {
 
   useEffect(() => {
     setChecking(true);
+
     const checkCode = async () => {
       if (code.length === 0) {
         setChecking(false);
+        setValidCode(false);
         return;
       }
-      const docRef = doc(db, "meetings", code);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setChecking(false);
-        setValidCode(true);
-      } else {
-        setChecking(false);
+
+      try {
+        const docRef = doc(db, "meetings", code);
+        const docSnap = await getDoc(docRef);
+
+        setValidCode(docSnap.exists());
+      } catch (err) {
+        // permission-denied or any other error
         setValidCode(false);
+      } finally {
+        setChecking(false);
       }
-    }
+    };
+
     checkCode();
   }, [code]);
+
 
   return (
     <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">

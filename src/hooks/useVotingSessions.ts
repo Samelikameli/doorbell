@@ -114,11 +114,14 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
       const voteOptions = hydrateVoteOptions(base.storedVoteOptions, proposalsByIdRef.current);
 
       return {
+        label: base.label,
         votingSessionId: base.votingSessionId,
         meetingCode: base.meetingCode,
         type: base.type,
         open: base.open,
         createdAt: base.createdAt,
+        closedAt: base.closedAt,
+        closedBy: base.closedBy,
         voteOptions,
         votes,
         votePublicity: base.votePublicity
@@ -160,11 +163,14 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
           const data = d.data({ serverTimestamps: "estimate" }) as VotingSessionDoc;
 
           bases.push({
+            label: data.label ?? "",
             votingSessionId: d.id,
             meetingCode: data.meetingCode,
             type: data.type,
             open: !!data.open,
             createdAt: toDateMaybe(data.createdAt),
+            closedAt: data.closedAt ? toDateMaybe(data.closedAt) : undefined,
+            closedBy: data.closedBy,
             storedVoteOptions: Array.isArray(data.voteOptions) ? data.voteOptions : [],
             votePublicity: data.votePublicity ?? "PUBLIC",
           });

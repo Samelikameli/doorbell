@@ -148,9 +148,7 @@ export const checkIfMeetingAdmin = onCall(
 );
 
 export const createProposal = onCall(
-  {
-    region: "europe-north1",
-  },
+  { region: "europe-north1" },
   async (req) => {
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
@@ -171,19 +169,21 @@ export const createProposal = onCall(
       return { status: "ERROR", message: "Meeting not found" };
     }
 
-    await meetingRef.collection("proposals").add({
+    const proposalRef = await meetingRef.collection("proposals").add({
       meetingCode: data.meetingCode,
       proposerName: data.proposerName,
-      proposerUid: req.auth?.uid ?? "",
+      proposerUid: uid,
       description: data.description,
       open: true,
       createdAt: FieldValue.serverTimestamp(),
       baseProposal: data.baseProposal,
+      supporterUids: [],
     } as Omit<Proposal, "id" | "createdAt">);
 
-    return { status: "OK" };
+    return { status: "OK", proposalId: proposalRef.id };
   }
 );
+
 
 export const createVotingSession = onCall(
   { region: "europe-north1" },
@@ -196,7 +196,7 @@ export const createVotingSession = onCall(
       throw new HttpsError("unauthenticated", "Admin authentication required.");
     }
 
-    const data = req.data as { meetingCode?: string; proposalIds?: string[] };
+    const data = req.data as { meetingCode?: string; proposalIds?: string[], addBlankOption: boolean };
 
     const meetingCode = (data?.meetingCode ?? "").trim();
     const proposalIdsRaw = Array.isArray(data?.proposalIds) ? data!.proposalIds : [];
@@ -255,9 +255,9 @@ export const createVotingSession = onCall(
 
       if (proposalIds.length === 1) {
         type = "FOR-AGAINST-ABSTAIN";
-        voteOptions.push({ id: "FOR", type: "FOR-AGAINST-ABSTAIN", vote: "FOR", label: "For" });
-        voteOptions.push({ id: "AGAINST", type: "FOR-AGAINST-ABSTAIN", vote: "AGAINST", label: "Against" });
-        voteOptions.push({ id: "ABSTAIN", type: "FOR-AGAINST-ABSTAIN", vote: "ABSTAIN", label: "Abstain" });
+        voteOptions.push({ id: "FOR", type: "FOR-AGAINST-ABSTAIN", vote: "FOR", label: "Puolesta" });
+        voteOptions.push({ id: "AGAINST", type: "FOR-AGAINST-ABSTAIN", vote: "AGAINST", label: "Vastaan" });
+        voteOptions.push({ id: "ABSTAIN", type: "FOR-AGAINST-ABSTAIN", vote: "ABSTAIN", label: "Tyhjä" });
       } else {
         type = "ONE-OF-PROPOSALS";
         for (const p of proposals) {
@@ -268,16 +268,18 @@ export const createVotingSession = onCall(
             label: p.description,
           });
         }
-        voteOptions.push({ id: "ABSTAIN", type: "FOR-AGAINST-ABSTAIN", vote: "ABSTAIN", label: "Abstain" });
+        if (data.addBlankOption) {
+          voteOptions.push({ id: "ABSTAIN", type: "FOR-AGAINST-ABSTAIN", vote: "ABSTAIN", label: "Tyhjä" });
+        }
       }
 
       const votingSessionRef = meetingRef.collection("votingSessions").doc();
 
       tx.set(votingSessionRef, {
+        label: type === 'FOR-AGAINST-ABSTAIN' ? `Äänestys ehdotuksesta: ${proposals[0].description}` : "Äänestys ehdotuksista",
         meetingCode,
         type,
         open: true,
-        // IMPORTANT for your vote read rules
         votePublicity: "PUBLIC", // or "PRIVATE" if you want closed votes hidden by default
         createdAt: FieldValue.serverTimestamp(),
         voteOptions,

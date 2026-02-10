@@ -1,16 +1,19 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSuperAdmin() {
-			let settingsDoc = get(/databases/$(database)/documents/settings/settings);
-			return request.auth != null
-				&& request.auth.token.email != null
-				&& (request.auth.token.email in settingsDoc.data.adminEmails);
+      let settingsDoc = get(/databases/$(database)/documents/settings/settings);
+      return request.auth != null
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/settings/settings)
+        && (settingsDoc.data.adminEmails is list)
+        && (request.auth.token.email in settingsDoc.data.adminEmails);
     }
+
     match /{document=**} {
       allow read, write: if false;
     }
+
     match /meetings/{meetingId} {
       function isMeetingAdmin() {
 			  let settingsDoc = get(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
@@ -24,10 +27,10 @@ service cloud.firestore {
       }
       function isMeetingParticipant() {
         return request.auth != null
-          && get(/databases/$(database)/documents/meetings/$(meetingId)/participants/$(request.auth.uid)).exists();
+          && exists(/databases/$(database)/documents/meetings/$(meetingId)/participants/$(request.auth.uid));
       }
 
-      allow get: if true;
+      allow get: if isMeetingPublic() || isMeetingAdmin() || isMeetingParticipant();
       allow create: if request.auth != null;
       allow write: if isMeetingAdmin();
       allow list: if isSuperAdmin();
@@ -49,44 +52,24 @@ service cloud.firestore {
         allow write: if isMeetingAdmin();
       }
 
-      match /presence/{uid} {
-        allow read, list: if isMeetingAdmin();
-        allow create, update: if true;
-      }
-
-      match /presenceEvents/{eventId} {
-        allow read, list: if isMeetingAdmin();
-        allow create: if true;
-        allow update, delete: if false;
-      }
-
       match /votingSessions/{votingSessionId} {
         allow read: if true;
-        allow create: if isMeetingAdmin();
+        allow create: if false;
         allow update, delete: if false;
 
         match /votes/{voteId} {
-          function parentSession() {
-            return get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
-          }
-
           function votesArePublic() {
-            let s = parentSession();
-            return s.exists()
-              && s.data.open == false
-              && s.data.votePublicity == "PUBLIC";
+            let s = get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
+            return exists(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId))
+              ? (s.data.open == false && s.data.votePublicity == "PUBLIC")
+              : false;
           }
+
           allow read, list: if isMeetingAdmin() || votesArePublic();
-
           allow create: if false;
-
           allow update, delete: if false;
         }
       }
-    }
-
-    match /speeches/{speechId} {
-      allow read, list: if false;
     }
   }
 }

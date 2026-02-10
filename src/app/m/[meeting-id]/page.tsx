@@ -37,6 +37,17 @@ export default function MeetingPage() {
         onOpenChange: onVotingSessionModalOpenChange,
     } = useDisclosure();
 
+    const {
+        isOpen: isQuickVoteOpen,
+        onOpen: onQuickVoteOpen,
+        onOpenChange: onQuickVoteOpenChange,
+    } = useDisclosure();
+
+    const [quickVoteText, setQuickVoteText] = useState("");
+    const [quickVoteSaving, setQuickVoteSaving] = useState(false);
+    const [quickVoteError, setQuickVoteError] = useState<string>("");
+
+
 
     const [selectedTab, setSelectedTab] = useState<"SPEECHES" | "VOTING">("SPEECHES");
 
@@ -50,7 +61,7 @@ export default function MeetingPage() {
 
     const [nowMs, setNowMs] = useState(() => Date.now());
 
-    const { openProposals } = useProposals(meeting?.code);
+    const { openProposals, acceptedProposals, rejectedProposals } = useProposals(meeting?.code);
 
     const { openVotingSessions, completedVotingSessions, loading: votingSessionsLoading, error: votingSessionsError } = useVotingSessions(meeting?.code);
 
@@ -436,6 +447,45 @@ export default function MeetingPage() {
         }
     };
 
+    const handleCreateQuickYesNoVote = async (onClose: () => void) => {
+        if (!meeting) return;
+        const text = quickVoteText.trim();
+        if (!text) return;
+
+        setQuickVoteSaving(true);
+        setQuickVoteError("");
+
+        try {
+            const createProposalFn = httpsCallable(functions, "createProposal");
+            const res1: any = await createProposalFn({
+                meetingCode: meeting.code,
+                description: text,
+                proposerName: userName,
+                baseProposal: false,
+            });
+
+            const proposalId = res1?.data?.proposalId as string | undefined;
+            if (!proposalId) {
+                throw new Error("createProposal did not return proposalId");
+            }
+
+            const createVotingSessionFn = httpsCallable(functions, "createVotingSession");
+            await createVotingSessionFn({
+                meetingCode: meeting.code,
+                proposalIds: [proposalId],
+            });
+
+            setQuickVoteText("");
+            onClose();
+            setSelectedTab("VOTING");
+        } catch (e: any) {
+            setQuickVoteError(String(e?.message ?? "Failed to create quick vote"));
+        } finally {
+            setQuickVoteSaving(false);
+        }
+    };
+
+
     const handleCompleteOngoingAndStartNext = async () => {
         const onGoingSpeechesLength = ongoingSpeeches.length;
         if (onGoingSpeechesLength !== 0) {
@@ -669,7 +719,7 @@ export default function MeetingPage() {
     const upcomingSpeechesColumn = (
         <div className="flex flex-col min-h-0 border border-border lg:overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                Tulevat puheenvuorot {upcomingSpeeches.length}
+                Tulevat puheenvuorot ({upcomingSpeeches.length})
             </h3>
             <div className="flex-1 min-h-0 overflow-y-auto p-3">
                 {upcomingSpeeches.map((speech, index) => (
@@ -713,8 +763,7 @@ export default function MeetingPage() {
         <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">Äänestys</h3>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-6">
-                {/* OPEN SESSIONS */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-3">
                 <div>
                     <h4 className="text-lg font-semibold mb-2">Avoimet</h4>
 
@@ -727,8 +776,14 @@ export default function MeetingPage() {
                         return (
                             <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
                                 <div className="flex items-start justify-between gap-3">
-                                    <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}</p>
-
+                                    <div className="flex flex-col">
+                                        {session.type === "FOR-AGAINST-ABSTAIN" &&
+                                            <p>
+                                                {session.label}
+                                            </p>
+                                        }
+                                        <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}</p>
+                                    </div>
                                     {isMeetingAdmin && (
                                         <Button
                                             size="sm"
@@ -774,7 +829,6 @@ export default function MeetingPage() {
                     {openVotingSessions.length === 0 && <p className="text-sm opacity-70">Ei avoimia äänestyksiä.</p>}
                 </div>
 
-                {/* CLOSED SESSIONS + RESULTS */}
                 <div>
                     <h4 className="text-lg font-semibold mb-2">Suljetut</h4>
 
@@ -800,7 +854,14 @@ export default function MeetingPage() {
                         return (
                             <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
                                 <div className="flex items-start justify-between gap-3">
-                                    <p className="text-sm text-muted">Suljettu, aloitettu {formatDate(session.createdAt)}</p>
+                                    <div className="flex flex-col">
+                                        {session.type === "FOR-AGAINST-ABSTAIN" &&
+                                            <p>
+                                                {session.label}
+                                            </p>
+                                        }
+                                        <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}{session.closedAt && (<span>, suljettu {formatDate(session.closedAt)}</span>)}</p>
+                                    </div>
                                     <div className="flex items-center gap-3">
                                         <Button
                                             onPress={() => handleCloseProposalsFromVoteResults(session)}
@@ -861,9 +922,9 @@ export default function MeetingPage() {
     const proposalsColumn = (
         <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                Ehdotukset ja päätöksenteko
+                Avoimet ehdotukset ({openProposals.length})
             </h3>
-            {/* open modal with button */}
+
             <Button className="m-4"
                 onPress={onProposalFormOpen}
                 startContent={<Image src={ACTION_ICON["PROPOSAL"]} alt="Lisää" width={24} height={24} />}
@@ -871,7 +932,7 @@ export default function MeetingPage() {
             >
                 Tee ehdotus
             </Button>
-            {/* List of open proposals */}
+
             <div className="flex-1 min-h-0 overflow-y-auto p-3">
                 {openProposals.map((proposal) => (
                     <ProposalCard
@@ -893,6 +954,13 @@ export default function MeetingPage() {
                 <div className="p-3 border-t border-border">
                     <Button onPress={onVotingSessionModalOpen}>
                         Avaa äänestys näistä ehdotuksista ({selectedProposalIds.size})
+                    </Button>
+                </div>
+            )}
+            {isMeetingAdmin && selectedProposalIds.size === 0 && (
+                <div className="p-3 border-t border-border">
+                    <Button onPress={onQuickVoteOpen}>
+                        Uusi kyllä/ei -pikaäänestys
                     </Button>
                 </div>
             )}
@@ -976,7 +1044,7 @@ export default function MeetingPage() {
             </div>
             <div className="flex flex-1 flex-col min-h-0 border border-border  overflow-hidden">
                 <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
-                    Menneet puheenvuorot
+                    Menneet puheenvuorot ({completedSpeeches.length})
                 </h3>
                 <div className="flex-1 min-h-0 overflow-y-auto p-3">
                     <ul>
@@ -1001,9 +1069,11 @@ export default function MeetingPage() {
         </div>
     </div>;
 
-    const votingTab = <div className="flex-1 min-h-0 lg:overflow-hidden">
-        {votingColumn}
-    </div>;
+    const votingTab = (
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+            {votingColumn}
+        </div>
+    );
 
     const content = selectedTab === "SPEECHES" ? speechesTab : votingTab;
 
@@ -1129,6 +1199,10 @@ export default function MeetingPage() {
                                         <p>
                                             Olet avaamassa äänestyksen valituista ehdotuksista ({selectedProposalIds.size} kpl).
                                         </p>
+                                        <p>
+                                            Äänestyksen avaamisen jälkeen ehdotuksia ei voi muokata.
+                                            Ehdotuksista äänestetään vastakkain.
+                                        </p>
                                         <p className="text-sm opacity-70">
                                             Äänestys avautuu heti kaikille kokouksen osallistujille.
                                         </p>
@@ -1149,6 +1223,11 @@ export default function MeetingPage() {
                                                     </div>
                                                 );
                                             })}
+                                            {addBlankOption && (
+                                                <div className="px-2 py-1 border border-border rounded mb-1">
+                                                    Tyhjä
+                                                </div>
+                                            )}
                                         </div>
                                     </ModalBody>
                                     <ModalFooter>
@@ -1161,6 +1240,57 @@ export default function MeetingPage() {
                                                 await handleCreateVotingSession();
                                                 onClose();
                                             }}
+                                        >
+                                            Avaa äänestys
+                                        </Button>
+                                    </ModalFooter>
+                                </>
+                            )}
+                        </ModalContent>
+                    </Modal>
+                    <Modal isOpen={isQuickVoteOpen} onOpenChange={onQuickVoteOpenChange}>
+                        <ModalContent>
+                            {(onClose) => (
+                                <>
+                                    <ModalHeader className="flex flex-col gap-1">Uusi kyllä/ei -pikaäänestys</ModalHeader>
+                                    <ModalBody>
+                                        <p className="text-sm opacity-80">
+                                            Luodaan uusi ehdotus ja avataan siitä heti kyllä/ei-äänestys.
+                                        </p>
+
+                                        <Form
+                                            id="quickYesNoVoteForm"
+                                            onSubmit={(e) => {
+                                                e.preventDefault();
+                                                handleCreateQuickYesNoVote(onClose);
+                                            }}
+                                        >
+                                            <Input
+                                                label="Ehdotuksen teksti"
+                                                placeholder="Kirjoita kysymys tai ehdotus..."
+                                                value={quickVoteText}
+                                                onChange={(e) => setQuickVoteText(e.target.value)}
+                                                isRequired
+                                                autoFocus
+                                                isDisabled={quickVoteSaving}
+                                            />
+                                        </Form>
+
+                                        {quickVoteError && (
+                                            <div className="text-sm text-danger">
+                                                {quickVoteError}
+                                            </div>
+                                        )}
+                                    </ModalBody>
+                                    <ModalFooter>
+                                        <Button variant="light" onPress={onClose} isDisabled={quickVoteSaving}>
+                                            Peruuta
+                                        </Button>
+                                        <Button
+                                            color="primary"
+                                            type="submit"
+                                            form="quickYesNoVoteForm"
+                                            isDisabled={quickVoteSaving || !quickVoteText.trim()}
                                         >
                                             Avaa äänestys
                                         </Button>

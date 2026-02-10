@@ -20,6 +20,13 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width" />
         <title>Puheenvuorot</title>
         <meta property="og:image" content="/icon.png" />
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link
+          rel="icon"
+          href="/icon?<generated>"
+          type="image/<generated>"
+          sizes="<generated>"
+        />
         <meta property="og:title" content="Puheenvuorot" />
       </head>
       <body className={montserrat.className}>

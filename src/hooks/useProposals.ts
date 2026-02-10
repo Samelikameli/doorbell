@@ -8,6 +8,8 @@ import type { Proposal } from "@/types";
 
 type UseProposalsResult = {
   openProposals: Proposal[];
+  acceptedProposals: Proposal[];
+  rejectedProposals: Proposal[];
   loading: boolean;
   error: Error | null;
 };
@@ -24,6 +26,8 @@ function mapProposal(docSnap: any): Proposal {
 
 export function useProposals(meetingCode: string | null | undefined): UseProposalsResult {
   const [openProposals, setOpenProposals] = useState<Proposal[]>([]);
+  const [acceptedProposals, setAcceptedProposals] = useState<Proposal[]>([]);
+  const [rejectedProposals, setRejectedProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -46,7 +50,7 @@ export function useProposals(meetingCode: string | null | undefined): UseProposa
       orderBy("createdAt", "asc")
     );
 
-    const unsubscribe = onSnapshot(
+    const unsubscribeOpen = onSnapshot(
       openQ,
       { includeMetadataChanges: true },
       (qs) => {
@@ -61,8 +65,37 @@ export function useProposals(meetingCode: string | null | undefined): UseProposa
       }
     );
 
-    return () => unsubscribe();
+    const closedQ = query(
+      proposalsCol,
+      where("open", "==", false),
+      orderBy("createdAt", "asc")
+    );
+
+    const unsubscribeClosed = onSnapshot(
+      closedQ,
+      { includeMetadataChanges: true },
+      (qs) => {
+        const accepted: Proposal[] = [];
+        const rejected: Proposal[] = [];
+        qs.forEach((d) => {
+          const p = mapProposal(d);
+          if (p.closedAs === "ACCEPTED") accepted.push(p);
+          else if (p.closedAs === "REJECTED") rejected.push(p);
+        });
+        setAcceptedProposals(accepted);
+        setRejectedProposals(rejected);
+      },
+      (err) => {
+        setError(err as Error);
+      }
+    );
+
+    return () => {
+      unsubscribeOpen();
+      unsubscribeClosed();
+    };
+
   }, [meetingCode]);
 
-  return { openProposals, loading, error };
+  return { openProposals, acceptedProposals, rejectedProposals, loading, error };
 }

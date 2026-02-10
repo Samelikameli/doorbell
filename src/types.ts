@@ -45,22 +45,25 @@ export interface Proposal {
 }
 
 export type StoredVoteOption =
-  | { id: string; type: "PROPOSAL"; proposalId: string; label?: string }
-  | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
+    | { id: string; type: "PROPOSAL"; proposalId: string; label?: string }
+    | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
 
 export type HydratedVoteOption =
-  | { id: string; type: "PROPOSAL"; proposalId: string; proposal: Proposal; label?: string }
-  | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
+    | { id: string; type: "PROPOSAL"; proposalId: string; proposal: Proposal; label?: string }
+    | { id: string; type: "FOR-AGAINST-ABSTAIN"; vote: "FOR" | "AGAINST" | "ABSTAIN"; label?: string };
 
 export interface VotingSession {
-  votingSessionId: string;
-  meetingCode: string;
-  voteOptions: HydratedVoteOption[]; // hydrated in UI
-  votes: Vote[];
-  type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
-  votePublicity: "PUBLIC" | "PRIVATE";
-  open: boolean;
-  createdAt: Date;
+    label: string;
+    votingSessionId: string;
+    meetingCode: string;
+    voteOptions: HydratedVoteOption[]; // hydrated in UI
+    votes: Vote[];
+    type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
+    votePublicity: "PUBLIC" | "PRIVATE";
+    open: boolean;
+    createdAt: Date;
+    closedAt?: Date;
+    closedBy?: string;
 }
 
 export interface Vote {
