@@ -1,6 +1,6 @@
 import Image from "next/image";
 import React, { useMemo, useState } from "react";
-import { Proposal } from "@/types";
+import { Proposal, ProposalCloseReason } from "@/types";
 import { Button, Checkbox, Form, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Tooltip, useDisclosure } from "@heroui/react";
 import { formatDate } from "@/utils";
 import { ACTION_ICON } from "@/utils";
@@ -25,7 +25,7 @@ export function ProposalCard({
   onSupportToggle: () => void;
   supportCount: number;
 
-  onClose: (proposalId: string) => void;
+  onClose: (proposalId: string, closedAs: ProposalCloseReason) => void;
 
   onEdit: (proposalId: string, newDescription: string) => Promise<void> | void;
 }) {
@@ -117,11 +117,11 @@ export function ProposalCard({
 
           {isMeetingAdmin && (
             <>
-              <Button color="danger" variant="flat" onPress={() => onClose(proposal.id)} isDisabled={isClosed}>
+              <Button color="danger" variant="flat" onPress={() => onClose(proposal.id, 'ACCEPTED')} isDisabled={isClosed}>
                 Sulje hyväksyttynä
               </Button>
-              <Button color="danger" variant="flat" onPress={() => onClose(proposal.id)} isDisabled={isClosed}>
-                Sulje hylättynä TODO: ei vielä eroa hyväksytty/hylätty välillä
+              <Button color="danger" variant="flat" onPress={() => onClose(proposal.id, 'REJECTED')} isDisabled={isClosed}>
+                Sulje hylättynä
               </Button>
             </>
           )}

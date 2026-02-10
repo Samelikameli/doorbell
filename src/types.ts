@@ -28,6 +28,8 @@ export interface Speech {
     ordinal: number;
 }
 
+export type ProposalCloseReason = "ACCEPTED" | "REJECTED";
+
 export interface Proposal {
     meetingCode: string;
     proposerUid: string;
@@ -38,6 +40,7 @@ export interface Proposal {
     supporterUids?: string[];
     supporterNames?: string[];
     open: boolean;
+    closedAs?: ProposalCloseReason;
     baseProposal: boolean; // pohjaesitys
 }
 

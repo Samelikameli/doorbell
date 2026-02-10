@@ -3,15 +3,31 @@
 
 import { useEffect, useState } from "react";
 import { onValue, ref } from "firebase/database";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { rtdb } from "@/firebase";
 
 export type OnlineUser = { uid: string; name: string; lastSeenAt: number };
 
-export function useOnlineNowRtdb(meetingCode?: string, windowMs: number = 60_000) {
+export function useOnlineNowRtdb(
+  meetingCode?: string,
+  windowMs: number = 60_000,
+  enabled: boolean = true
+) {
   const [online, setOnline] = useState<OnlineUser[]>([]);
+  const [uidReady, setUidReady] = useState(false);
 
   useEffect(() => {
-    console.log("[online] hook", { meetingCode, windowMs });
+    const auth = getAuth();
+    return onAuthStateChanged(auth, (u) => setUidReady(!!u));
+  }, []);
+
+  useEffect(() => {
+    console.log("[online] hook", { meetingCode, windowMs, enabled, uidReady });
+
+    if (!enabled || !uidReady) {
+      setOnline([]);
+      return;
+    }
 
     if (!meetingCode) {
       console.warn("[online] missing meetingCode");
@@ -30,74 +46,26 @@ export function useOnlineNowRtdb(meetingCode?: string, windowMs: number = 60_000
         const now = Date.now();
         const val = snap.val();
 
-        console.log("[online] snapshot", {
-          exists: snap.exists(),
-          type: val === null ? "null" : Array.isArray(val) ? "array" : typeof val,
-          keys: val && typeof val === "object" ? Object.keys(val).slice(0, 10) : [],
-        });
-
         if (!val || typeof val !== "object") {
-          console.warn("[online] empty presence tree");
           setOnline([]);
           return;
         }
 
         const out: OnlineUser[] = [];
-        let totalSessions = 0;
-        let droppedMissingFields = 0;
-        let droppedStale = 0;
 
-        // Supports both shapes:
-        // A) presence/{meeting}/{uid}/{sessionId} = { name, lastSeenAt }
-        // B) presence/{meeting}/{sessionId} = { name, lastSeenAt }  (fallback)
-        for (const [lvl1Key, lvl1Val] of Object.entries(val as Record<string, any>)) {
-          if (!lvl1Val || typeof lvl1Val !== "object") continue;
-
-          // Detect if lvl1Val looks like a single presence object (shape B)
-          const looksLikePresenceObject =
-            typeof lvl1Val.name === "string" && typeof lvl1Val.lastSeenAt === "number";
-
-          if (looksLikePresenceObject) {
-            totalSessions += 1;
-            const lastSeenAt = lvl1Val.lastSeenAt as number;
-            const name = (lvl1Val.name as string) ?? "";
-            if (!name || !lastSeenAt) {
-              droppedMissingFields += 1;
-              continue;
-            }
-            if (now - lastSeenAt > windowMs) {
-              droppedStale += 1;
-              continue;
-            }
-            out.push({ uid: lvl1Val.uid ?? lvl1Key, name, lastSeenAt });
-            continue;
-          }
-
-          // Otherwise treat lvl1Key as uid and lvl1Val as sessions map (shape A)
-          const uid = lvl1Key;
-          const sessions = lvl1Val as Record<string, any>;
+        // Shape A only (recommended). If you truly need shape B, keep it.
+        for (const [uid, sessions] of Object.entries(val as Record<string, any>)) {
+          if (!sessions || typeof sessions !== "object") continue;
 
           let best: OnlineUser | null = null;
 
-          for (const [sessionId, s] of Object.entries(sessions)) {
-            totalSessions += 1;
-
+          for (const s of Object.values(sessions as Record<string, any>)) {
             const lastSeenAt = typeof s?.lastSeenAt === "number" ? s.lastSeenAt : 0;
             const name = typeof s?.name === "string" ? s.name : "";
             const effectiveUid = typeof s?.uid === "string" ? s.uid : uid;
 
-            if (!name || !lastSeenAt) {
-              droppedMissingFields += 1;
-              console.log("[online] drop missing fields", { uid, sessionId, s });
-              continue;
-            }
-
-            const age = now - lastSeenAt;
-            if (age > windowMs) {
-              droppedStale += 1;
-              console.log("[online] drop stale", { uid, sessionId, ageMs: age, lastSeenAt });
-              continue;
-            }
+            if (!name || !lastSeenAt) continue;
+            if (now - lastSeenAt > windowMs) continue;
 
             if (!best || lastSeenAt > best.lastSeenAt) {
               best = { uid: effectiveUid, name, lastSeenAt };
@@ -108,15 +76,6 @@ export function useOnlineNowRtdb(meetingCode?: string, windowMs: number = 60_000
         }
 
         out.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
-
-        console.log("[online] computed", {
-          online: out.length,
-          totalSessions,
-          droppedMissingFields,
-          droppedStale,
-          sample: out.slice(0, 5),
-        });
-
         setOnline(out);
       },
       (err) => {
@@ -129,7 +88,7 @@ export function useOnlineNowRtdb(meetingCode?: string, windowMs: number = 60_000
       console.log("[online] unsubscribe", { path });
       unsub();
     };
-  }, [meetingCode, windowMs]);
+  }, [meetingCode, windowMs, enabled, uidReady]);
 
   return { online };
 }

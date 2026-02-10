@@ -5,7 +5,7 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 initializeApp();
 
-import { MeetingCreateRequest, Proposal, SpeechCreateRequest, SpeechType } from "../../src/types";
+import { MeetingCreateRequest, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType } from "../../src/types";
 
 export const createMeeting = onCall(
   {
@@ -368,7 +368,7 @@ export const closeProposal = onCall(
       throw new HttpsError("unauthenticated", "Unauthenticated");
     }
 
-    const data = req.data as { meetingCode: string; proposalId: string };
+    const data = req.data as { meetingCode: string; proposalId: string; closedAs: ProposalCloseReason };
 
     const meetingCode = (data?.meetingCode ?? "").trim();
     const proposalId = (data?.proposalId ?? "").trim();
@@ -413,6 +413,7 @@ export const closeProposal = onCall(
       tx.update(proposalRef, {
         open: false,
         closedAt: FieldValue.serverTimestamp(),
+        closedAs: data.closedAs,
         closedBy: userEmail,
       });
     });

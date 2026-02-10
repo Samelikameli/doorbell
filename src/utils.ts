@@ -2,9 +2,9 @@ export const formatDate = (date: Date) => {
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
     if (isToday) {
-        return date.toLocaleTimeString();
+        return date.toLocaleTimeString("fi-FI");
     } else {
-        return date.toLocaleDateString();
+        return date.toLocaleDateString("fi-FI");
     }
 }
 

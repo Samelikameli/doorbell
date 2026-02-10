@@ -35,8 +35,8 @@ service cloud.firestore {
       match /speeches/{speechId} {
         allow create: if false;
         allow read: if true;
-        allow update: if true;
-        allow delete: if true;
+        allow update: if isMeetingAdmin();
+        allow delete: if false;
       }
 
       match /speechTypes/{speechTypeId} {
@@ -46,7 +46,7 @@ service cloud.firestore {
 
       match /proposals/{proposalId} {
         allow read: if true;
-        allow write: if true;
+        allow write: if isMeetingAdmin();
       }
 
       match /presence/{uid} {

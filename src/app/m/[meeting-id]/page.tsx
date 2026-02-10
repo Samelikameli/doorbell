@@ -8,7 +8,7 @@ import { Input } from "@heroui/input";
 import { Button } from "@heroui/button";
 import { db } from "@/firebase";
 import { collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, updateDoc } from "@firebase/firestore";
-import { Meeting, Proposal, SpeechCreateRequest, SpeechType } from "@/types";
+import { Meeting, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType, VotingSession } from "@/types";
 import { Checkbox, Form, Select, SelectItem, Tooltip, useDisclosure } from "@heroui/react";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import { functions } from "@/firebase";
@@ -75,8 +75,10 @@ export default function MeetingPage() {
 
     const [selectedProposalIds, setSelectedProposalIds] = useState<Set<string>>(() => new Set());
 
-    useRtdbPresence(meeting?.code, userName, userName !== "");
-    const { online } = useOnlineNowRtdb(meeting?.code, 60_000);
+    const rtdbEnabled = !!user && !loading && userName.trim() !== "" && !!meeting?.code;
+
+    useRtdbPresence(meeting?.code, userName, rtdbEnabled);
+    const { online } = useOnlineNowRtdb(meeting?.code, 60_000, rtdbEnabled);
 
     const toggleSelected = (proposalId: string, selected: boolean) => {
         setSelectedProposalIds((prev) => {
@@ -504,11 +506,11 @@ export default function MeetingPage() {
         }
     };
 
-    const handleCloseProposal = async (proposalId: string) => {
+    const handleCloseProposal = async (proposalId: string, closedAs: ProposalCloseReason) => {
         if (!meeting) return;
         try {
             const fn = httpsCallable(functions, "closeProposal");
-            await fn({ meetingCode: meeting.code, proposalId });
+            await fn({ meetingCode: meeting.code, proposalId, closedAs });
         } catch (e) {
             console.error("Error closing proposal:", e);
         }
@@ -564,17 +566,80 @@ export default function MeetingPage() {
         try {
             const fn = httpsCallable(functions, "castVote");
 
-            // Always authenticated now (anonymous or Google)
             await fn({
                 meetingCode: meeting.code,
                 votingSessionId,
                 voteOptionId,
-
-                // optional: store/display name even for authed users if you want
                 voterName: userName,
             });
         } catch (e: any) {
             console.error("Error casting vote:", e);
+        }
+    };
+
+    const handleCloseProposalsFromVoteResults = async (session: VotingSession) => {
+        if (!meeting) return;
+
+        // calculate winning proposal id from votes
+        const proposalVotesCount: Record<string, number> = {};
+        session.voteOptions.forEach(option => {
+            if (option.type === "PROPOSAL") {
+                proposalVotesCount[option.proposalId] = 0;
+            }
+        });
+        session.votes.forEach(vote => {
+            const option = session.voteOptions.find(o => o.id === vote.voteOptionId);
+            if (option?.type === "PROPOSAL") {
+                proposalVotesCount[option.proposalId] = (proposalVotesCount[option.proposalId] || 0) + 1;
+            }
+        });
+
+        // find proposal id with most votes
+        let winningProposalId: string | null = null;
+        let maxVotes = -1;
+        for (const proposalId in proposalVotesCount) {
+            if (proposalVotesCount[proposalId] > maxVotes) {
+                maxVotes = proposalVotesCount[proposalId];
+                winningProposalId = proposalId;
+            }
+        }
+
+        // find ties if any
+        const tiedProposalIds = Object.keys(proposalVotesCount).filter(pid => proposalVotesCount[pid] === maxVotes);
+        if (tiedProposalIds.length > 1) {
+            console.log("Voting session resulted in a tie between proposals:", tiedProposalIds);
+            return;
+        }
+
+        if (!winningProposalId) {
+            console.log("No winning proposal found for voting session:", session.votingSessionId);
+            return;
+        }
+
+        // now we have the winning proposal id, we can close it
+        try {
+            const fn = httpsCallable(functions, "closeProposal");
+            await fn({
+                meetingCode: meeting.code,
+                proposalId: winningProposalId,
+                closedAs: "ACCEPTED" as ProposalCloseReason,
+            });
+        } catch (e) {
+            console.error("Error closing winning proposal:", e);
+        }
+        // close losing proposals as well
+        const losingProposalIds = Object.keys(proposalVotesCount).filter(pid => pid !== winningProposalId);
+        for (const proposalId of losingProposalIds) {
+            try {
+                const fn = httpsCallable(functions, "closeProposal");
+                await fn({
+                    meetingCode: meeting.code,
+                    proposalId,
+                    closedAs: "REJECTED" as ProposalCloseReason,
+                });
+            } catch (e) {
+                console.error("Error closing losing proposal:", e);
+            }
         }
     };
 
@@ -632,8 +697,8 @@ export default function MeetingPage() {
     );
 
     const onlineNow = (
-        <div className="m-4 p-3 border border-border rounded">
-            <div className="font-semibold">Online now ({online.length})</div>
+        <div className="p-3 border border-border rounded">
+            <div className="font-semibold">Online ({online.length})</div>
             <ul className="mt-2 space-y-1 text-sm">
                 {online.map((u) => (
                     <li key={u.name}>
@@ -643,6 +708,7 @@ export default function MeetingPage() {
             </ul>
         </div>
     )
+
     const votingColumn = (
         <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">Äänestys</h3>
@@ -724,7 +790,6 @@ export default function MeetingPage() {
                             }))
                             .sort((a, b) => b.count - a.count);
 
-                        // public votes list (only after closed)
                         const votesByOption = new Map<string, { voterUid: string, voterName: string }[]>();
                         for (const v of session.votes) {
                             const arr = votesByOption.get(v.voteOptionId) ?? [];
@@ -736,7 +801,14 @@ export default function MeetingPage() {
                             <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
                                 <div className="flex items-start justify-between gap-3">
                                     <p className="text-sm text-muted">Suljettu, aloitettu {formatDate(session.createdAt)}</p>
-                                    <div className="text-sm opacity-70">Ääniä: {session.votes.length}</div>
+                                    <div className="flex items-center gap-3">
+                                        <Button
+                                            onPress={() => handleCloseProposalsFromVoteResults(session)}
+                                        >
+                                            Sulje ehdotukset: voittanut hyväksyttynä, hävinneet hylättynä
+                                        </Button>
+                                        <div className="text-sm opacity-70">Ääniä: {session.votes.length}</div>
+                                    </div>
                                 </div>
 
                                 <div className="mt-3">
@@ -863,7 +935,7 @@ export default function MeetingPage() {
                     )}
                 </div>
             )}
-            {ongoingSpeeches.length === 0 && (
+            {ongoingSpeeches.length === 0 && isMeetingAdmin && (
                 <Tooltip content="Ei käynnissä olevaa puheenvuoroa. Voit aloittaa seuraavan tästä" placement="top">
                     <Button id="start-next-button" className="m-4" onPress={() => {
                         if (upcomingSpeeches.length > 0) {
@@ -917,7 +989,6 @@ export default function MeetingPage() {
                     </ul>
                 </div>
             </div>
-            {onlineNow}
         </div>
 
     );
@@ -946,6 +1017,7 @@ export default function MeetingPage() {
                         <div>
                             {meeting?.name} <span className="font-mono">{meeting?.code}</span>
                         </div>
+                        {onlineNow}
                         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
                             {/** Tab selection */}
                             <div className="flex gap-2 mt-2">
