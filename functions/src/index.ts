@@ -5,7 +5,7 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 initializeApp();
 
-import { MeetingCreateRequest, SpeechCreateRequest, SpeechType } from "../../src/types";
+import { MeetingCreateRequest, Proposal, SpeechCreateRequest, SpeechType } from "../../src/types";
 
 export const createMeeting = onCall(
   {
@@ -37,19 +37,19 @@ export const createMeeting = onCall(
     await db.collection("meetings").doc(data.code).collection("speechTypes").doc("DEFAULT").set({
       label: "puheenvuoro",
       priority: 1000,
-      icon: "raised_hand"
+      icon: "DEFAULT"
     } as SpeechType);
 
     await db.collection("meetings").doc(data.code).collection("speechTypes").doc("COMMENT").set({
       label: "repliikki",
       priority: 500,
-      icon: "peace-hand"
+      icon: "COMMENT"
     } as SpeechType);
 
     await db.collection("meetings").doc(data.code).collection("speechTypes").doc("TECHNICAL").set({
       label: "tekninen",
       priority: 10,
-      icon: "time-out"
+      icon: "TECHNICAL"
     } as SpeechType);
 
     return { status: "OK" };
@@ -161,6 +161,7 @@ export const createProposal = onCall(
       meetingCode: string;
       proposerName: string;
       description: string;
+      baseProposal: boolean;
     };
 
     const meetingRef = db.collection("meetings").doc(data.meetingCode);
@@ -171,11 +172,14 @@ export const createProposal = onCall(
     }
 
     await meetingRef.collection("proposals").add({
+      meetingCode: data.meetingCode,
       proposerName: data.proposerName,
+      proposerUid: req.auth?.uid ?? "",
       description: data.description,
       open: true,
       createdAt: FieldValue.serverTimestamp(),
-    });
+      baseProposal: data.baseProposal,
+    } as Omit<Proposal, "id" | "createdAt">);
 
     return { status: "OK" };
   }
@@ -474,6 +478,187 @@ export const closeVotingSession = onCall(
         open: false,
         closedAt: FieldValue.serverTimestamp(),
         closedBy: userEmail,
+      });
+    });
+
+    return { status: "OK" };
+  }
+);
+
+export const setProposalSupport = onCall(
+  { region: "europe-north1" },
+  async (req) => {
+    const db = getFirestore();
+
+    const uid = req.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const data = req.data as {
+      meetingCode?: string;
+      proposalId?: string;
+      addSupport?: boolean;
+      supporterName?: string; // optional: for display only
+    };
+
+    const meetingCode = String(data?.meetingCode ?? "").trim();
+    const proposalId = String(data?.proposalId ?? "").trim();
+    const addSupport = Boolean(data?.addSupport);
+    //const supporterName = String(data?.supporterName ?? "").trim();
+
+    if (!meetingCode || !proposalId) {
+      throw new HttpsError("invalid-argument", "Missing meetingCode or proposalId.");
+    }
+
+    const proposalRef = db
+      .collection("meetings")
+      .doc(meetingCode)
+      .collection("proposals")
+      .doc(proposalId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(proposalRef);
+      if (!snap.exists) {
+        throw new HttpsError("not-found", "Proposal not found.");
+      }
+
+      const p = snap.data() ?? {};
+      if (p.open === false) {
+        throw new HttpsError("failed-precondition", "Proposal is closed.");
+      }
+
+      const supporterUids: string[] = Array.isArray(p.supporterUids) ? p.supporterUids : [];
+
+      const alreadySupported = supporterUids.includes(uid);
+
+      // Idempotent behavior
+      if (addSupport && alreadySupported) return;
+      if (!addSupport && !alreadySupported) return;
+
+      if (addSupport) {
+        tx.update(proposalRef, {
+          supporterUids: FieldValue.arrayUnion(uid),
+
+          // Optional metadata
+          lastSupportAt: FieldValue.serverTimestamp(),
+        });
+
+        // Optional: store name mapping if you want (requires schema decision)
+        // if (supporterName) {
+        //   tx.update(proposalRef, {
+        //     supporterNames: FieldValue.arrayUnion(supporterName),
+        //   });
+        // }
+
+      } else {
+        tx.update(proposalRef, {
+          supporterUids: FieldValue.arrayRemove(uid),
+
+          // Optional metadata
+          lastSupportAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+
+    return { status: "OK" };
+  }
+);
+
+export const editProposal = onCall(
+  { region: "europe-north1" },
+  async (req) => {
+    const db = getFirestore();
+
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userEmail = req.auth?.token.email ?? null;
+
+    const data = req.data as {
+      meetingCode?: string;
+      proposalId?: string;
+      description?: string;
+      editorName?: string; // optional metadata
+    };
+
+    const meetingCode = String(data?.meetingCode ?? "").trim();
+    const proposalId = String(data?.proposalId ?? "").trim();
+    const newDescription = String(data?.description ?? "").trim();
+    const editorName = String(data?.editorName ?? "").trim();
+
+    if (!meetingCode || !proposalId) {
+      throw new HttpsError("invalid-argument", "Missing meetingCode or proposalId.");
+    }
+    if (!newDescription) {
+      throw new HttpsError("invalid-argument", "Description is required.");
+    }
+    if (newDescription.length > 1000) {
+      throw new HttpsError("invalid-argument", "Description is too long.");
+    }
+
+    const meetingRef = db.collection("meetings").doc(meetingCode);
+    const proposalRef = meetingRef.collection("proposals").doc(proposalId);
+    const settingsRef = meetingRef.collection("meetingSettings").doc("settings");
+
+    // Block edits if proposal is in an OPEN voting session
+    // (this is what "in voting" typically means)
+    const inVotingSnap = await meetingRef
+      .collection("votingSessions")
+      .where("open", "==", true)
+      .where("proposalIds", "array-contains", proposalId)
+      .limit(1)
+      .get();
+
+    if (!inVotingSnap.empty) {
+      throw new HttpsError("failed-precondition", "Proposal is in an open voting session.");
+    }
+
+    await db.runTransaction(async (tx) => {
+      const [proposalSnap, settingsSnap] = await Promise.all([
+        tx.get(proposalRef),
+        tx.get(settingsRef),
+      ]);
+
+      if (!proposalSnap.exists) {
+        throw new HttpsError("not-found", "Proposal not found.");
+      }
+
+      const proposal = proposalSnap.data() ?? {};
+      const isOpen = proposal.open !== false;
+      if (!isOpen) {
+        throw new HttpsError("failed-precondition", "Proposal is closed.");
+      }
+
+      // Authorization:
+      // Allow meeting admins OR the original proposer (if you store proposerUid)
+      // If you do not have proposerUid, restrict to admins only.
+      const adminEmails = (settingsSnap.exists ? (settingsSnap.data()?.adminEmails ?? []) : []) as string[];
+
+      const isAdmin = !!userEmail && adminEmails.includes(userEmail);
+
+      const proposerUid = typeof proposal.proposerUid === "string" ? proposal.proposerUid : null;
+      const isProposer = proposerUid ? proposerUid === uid : false;
+
+      // If proposerUid is not stored, only admins can edit (safer default)
+      const allowed = proposerUid ? (isAdmin || isProposer) : isAdmin;
+
+      if (!allowed) {
+        throw new HttpsError("permission-denied", "Not allowed to edit this proposal.");
+      }
+
+      // Edit resets supporters
+      tx.update(proposalRef, {
+        description: newDescription,
+        supporterUids: [],
+
+        // optional: if you had supporterNames etc, clear them too
+        // supporterNames: [],
+
+        editedAt: FieldValue.serverTimestamp(),
+        editedByUid: uid,
+        editedByEmail: userEmail,
+        editedByName: editorName || null,
       });
     });
 

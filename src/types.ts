@@ -30,11 +30,15 @@ export interface Speech {
 
 export interface Proposal {
     meetingCode: string;
+    proposerUid: string;
     proposerName: string;
     description: string;
     createdAt: Date;
     id: string;
-    supporterUids?: string[]
+    supporterUids?: string[];
+    supporterNames?: string[];
+    open: boolean;
+    baseProposal: boolean; // pohjaesitys
 }
 
 export type StoredVoteOption =
@@ -71,6 +75,7 @@ export type SpeechCreateRequest = Omit<Speech, "id" | "createdAt" | "started" | 
 export interface SpeechAction {
     label: string;
     onPress: () => void;
+    icon: string;
 }
 
 export interface SpeechType {

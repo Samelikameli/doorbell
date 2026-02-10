@@ -244,11 +244,15 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
 
               const proposal: Proposal = {
                 meetingCode: pdata.meetingCode ?? meetingCode,
+                proposerUid: pdata.proposerUid ?? "",
                 proposerName: pdata.proposerName ?? "",
                 description: pdata.description ?? "",
                 createdAt: toDateMaybe(pdata.createdAt),
                 id: snap.id,
                 supporterUids: Array.isArray(pdata.supporterUids) ? pdata.supporterUids : [],
+                supporterNames: Array.isArray(pdata.supporterNames) ? pdata.supporterNames : [],
+                open: !!pdata.open,
+                baseProposal: !!pdata.baseProposal,
               };
 
               proposalsByIdRef.current.set(proposalId, proposal);
