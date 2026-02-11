@@ -23,7 +23,8 @@ service cloud.firestore {
       }
       function isMeetingPublic() {
         let settingsDoc = get(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
-        return settingsDoc.data.isPublic == true;
+        let e = exists(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
+        return !e || settingsDoc.data.isPublic == true;
       }
       function isMeetingParticipant() {
         return request.auth != null

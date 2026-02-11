@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { getAuth, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { default as app } from "../../firebase";
+import { Button } from "@heroui/react";
 
 const provider = new GoogleAuthProvider();
 const auth = getAuth(app);
@@ -28,10 +29,12 @@ const AdminPage: React.FC = () => {
 
     return (
         <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">
-            <h1>Admin Login</h1>
-            <button onClick={handleSignIn}>
+            <span className="text-2xl lg:text-3xl font-semibold mb-4">Kirjaudu sisään</span>
+            <p>Kirjaudu sisään, jotta voit luoda ja hallinnoida kokouksia</p>
+            <p>Osa kokouksista voi myös vaatia kirjautumisen</p>
+            <Button onClick={handleSignIn}>
                 Kirjaudu sisään Google-tililläsi
-            </button>
+            </Button>
         </div>
     );
 };

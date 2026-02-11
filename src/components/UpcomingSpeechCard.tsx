@@ -5,7 +5,7 @@ import { formatDate } from "@/utils";
 import Image from "next/image";
 import { SPEECH_TYPE_ICON, ACTION_ICON } from "@/utils";
 
-export function UpcomingSpeech({
+export function UpcomingSpeechCard({
     speech,
     speechType,
     isMeetingAdmin,
@@ -51,10 +51,13 @@ export function UpcomingSpeech({
             {isMeetingAdmin && (
                 <div className="flex flex-col ml-auto space-y-2">
                     {actions.map((action, index) => (
-                        <Tooltip key={index} content={action.label} placement="left">
+                        <Tooltip key={index}>
                             <Button key={index} isIconOnly className="text-left" onPress={action.onPress}>
                                 <Image src={ACTION_ICON[action.icon]} alt={action.label} width={24} height={24} />
                             </Button>
+                            <Tooltip.Content placement="left">
+                                {action.label}
+                            </Tooltip.Content>
                         </Tooltip>
                     ))}
                 </div>

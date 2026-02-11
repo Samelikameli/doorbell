@@ -2,13 +2,11 @@
 
 //import { useUser } from "@/context/UserContext";
 import { useRouter } from "next/navigation";
-import { DatePicker, Form } from "@heroui/react";
-import { now, getLocalTimeZone, ZonedDateTime } from "@internationalized/date";
+import { DateField, DateInputGroup, Form, Input, Button, Label, Switch, SwitchGroup, TextField } from "@heroui/react";
+import { now, getLocalTimeZone, type DateValue, ZonedDateTime } from "@internationalized/date";
 
 import { FormEvent, useEffect, useState } from "react";
 import { useUser } from "@/context/UserContext";
-import { Input } from "@heroui/input";
-import { Button } from "@heroui/button";
 import { db, functions } from "@/firebase";
 import { httpsCallable } from "firebase/functions";
 import { doc, getDoc } from "@firebase/firestore";
@@ -24,28 +22,38 @@ export default function NewPage() {
     const [checking, setChecking] = useState(false);
     const [existing, setExisting] = useState(false);
     const [name, setName] = useState("");
+    const [requireLogin, setRequireLogin] = useState(false);
     const [startTime, setStartTime] = useState<ZonedDateTime | null>(now(getLocalTimeZone()));
 
     useEffect(() => {
-        if (!loading && !user) {
+        console.log("User loading state:", loading, "user:", user);
+        if (!loading && user && user.isAnonymous) {
             router.push('/login?redirect=/new');
         }
     }, [user, loading, router]);
 
     useEffect(() => {
+        // treat forbidden as taken
         setChecking(true);
         const checkCode = async () => {
-            if (code.length === 0) {
-                setChecking(false);
-                return;
-            }
-            const docRef = doc(db, "meetings", code);
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
+            try {
+                if (code.length === 0) {
+                    setChecking(false);
+                    return;
+                }
+                const docRef = doc(db, "meetings", code);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    console.log("Meeting code already exists:", code);
+                    setChecking(false);
+                    setExisting(true);
+                } else {
+                    setChecking(false);
+                    setExisting(false);
+                }
+            } catch (err) {
                 setExisting(true);
-            } else {
                 setChecking(false);
-                setExisting(false);
             }
         }
         checkCode();
@@ -65,6 +73,8 @@ export default function NewPage() {
             const result = await createMeeting({
                 code,
                 name,
+                requireLogin,
+                startsAt: startTime ? startTime.toDate() : null,
             } as MeetingCreateRequest);
             console.log("Meeting created:", result.data);
 
@@ -78,32 +88,64 @@ export default function NewPage() {
         <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">
             <div className={'flex justify-center items-left flex-col w-full text-foreground bg-background min-h-screen gap-4 w-3/4 lg:w-1/4 '}>
                 <h2 className="text-2xl lg:text-3xl font-semibold">Uusi kokous</h2>
-                <Form onSubmit={handleCreateMeeting} validationBehavior="native" >
-                    <Input
-                        label="Kokouksen nimi"
+                <Form onSubmit={handleCreateMeeting} validationBehavior="native" className="flex flex-col gap-4" >
+                    <TextField
+                        id="name"
                         isRequired={true}
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
-                    />
-                    <Input
-                        label="Kokouksen liittymiskoodi"
+                    >
+                        <Label>Kokouksen nimi</Label>
+
+                        <Input placeholder="Hallituksen syyskokous" onChange={(e) => setName(e.target.value)} />
+
+                    </TextField>
+                    <TextField
+                        id="code"
                         isRequired={true}
                         className="font-mono"
                         value={code}
-                        onChange={(e) => setCode(e.target.value)}
+                        onChange={(value) => setCode(value)}>
+                        <Label htmlFor="code">Kokouksen liittymiskoodi</Label>
 
-                        isInvalid={code.length > 0 && existing}
-                        errorMessage="Koodi on jo käytössä"
-                    />
+                        <Input placeholder="esim. hallitus2024" onChange={(e) => setCode(e.target.value)} />
+                        {checking && <p className="text-sm text-muted">Tarkistetaan...</p>}
+                        {!checking && existing && <p className="text-sm text-red-500">Koodi on jo käytössä</p>}
+                    </TextField>
+
+                    <Switch isSelected={requireLogin} onChange={setRequireLogin}>
+                        <Switch.Control>
+                            <Switch.Thumb />
+                        </Switch.Control>
+                        <Label className="text-sm">Vaadi kirjautuminen Google-tilillä</Label>
+                    </Switch>
+
                     <I18nProvider locale="fi-FI">
-                        <DatePicker
-                            label="Kokous alkaa"
+                        <DateField
                             hourCycle={24}
-                            hideTimeZone={true}
-                            onChange={(date) => setStartTime(date)}
                             value={startTime}
                             defaultValue={now(getLocalTimeZone())}
-                        />
+                            onChange={(value) => setStartTime(value)}>
+                            <Label>Kokous alkaa</Label>
+                            <DateInputGroup>
+                                <DateInputGroup.Input>
+                                    {(segment) => {
+                                        // render, but replace "/" with "." to match Finnish date format
+                                        if (segment.text === '/') {
+                                            const { text: _ignored, ...rest } = segment;
+
+                                            return (
+                                                <DateInputGroup.Segment
+                                                    segment={{ ...rest, text: '.' }}
+                                                />
+                                            );
+                                        }
+                                        else {
+                                            return <DateInputGroup.Segment segment={segment} />;
+                                        }
+                                    }}
+                                </DateInputGroup.Input>
+                            </DateInputGroup>
+                        </DateField>
                     </I18nProvider>
                     <p>Kokouksen tekijän sähköposti: <span className="font-mono">{user?.email}</span></p>
                     <Button

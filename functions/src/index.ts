@@ -5,7 +5,43 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 initializeApp();
 
-import { MeetingCreateRequest, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType } from "../../src/types";
+import { Meeting, MeetingCreateRequest, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType } from "../../src/types";
+import { DecodedIdToken } from "firebase-admin/auth";
+
+const isUserAnonymous = (auth: DecodedIdToken): boolean => {
+  return !auth.email;
+};
+
+const isMeetingParticipant = async (db: FirebaseFirestore.Firestore, meeting: Meeting, authToken?: DecodedIdToken): Promise<boolean> => {
+  const requireLogin = meeting.requireLogin ?? false;
+  if (!requireLogin) {
+    return !!authToken;
+  }
+  else {
+    if (!authToken) {
+      return false;
+    }
+    else {
+      return !isUserAnonymous(authToken);
+    }
+  }
+};
+
+const isMeetingAdmin = async (db: FirebaseFirestore.Firestore, meeting: Meeting, authToken?: DecodedIdToken): Promise<boolean> => {
+  if (!authToken || isUserAnonymous(authToken) || !authToken.email) {
+    return false;
+  }
+
+  const settingsDoc = await db.collection("meetings").doc(meeting.code).collection("meetingSettings").doc("settings").get();
+  const settings = settingsDoc.data();
+
+  if (!settings) {
+    return false;
+  }
+
+  const adminEmails: string[] = settings.adminEmails || [];
+  return adminEmails.includes(authToken.email);
+}
 
 export const createMeeting = onCall(
   {
@@ -24,7 +60,9 @@ export const createMeeting = onCall(
       code: data.code,
       createdAt: FieldValue.serverTimestamp(),
       createdBy: user_email,
-    });
+      requireLogin: data.requireLogin,
+      startsAt: data.startsAt,
+    } as Omit<Meeting, "createdAt">);
 
     // create a meeting settings document with default settings
     await db.collection("meetings").doc(data.code).collection("meetingSettings").doc("settings").set({
@@ -73,6 +111,10 @@ export const createSpeech = onCall(
 
     if (!meetingDoc.exists) {
       return { status: "ERROR", message: "Meeting not found" };
+    }
+
+    if (!await isMeetingParticipant(db, meetingDoc.data() as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "You are not a participant of this meeting.");
     }
 
     // Validate speech type exists
@@ -131,15 +173,14 @@ export const checkIfMeetingAdmin = onCall(
 
     const meetingCode = req.data.meetingCode as string;
 
-    const settingsDoc = await db.collection("meetings").doc(meetingCode).collection("meetingSettings").doc("settings").get();
-
-    if (!settingsDoc.exists) {
-      return { status: "ERROR", message: "Meeting settings not found" };
+    const meetingRef = db.collection("meetings").doc(meetingCode);
+    const meetingDoc = await meetingRef.get();
+    if (!meetingDoc.exists) {
+      return { status: "ERROR", message: "Meeting not found" };
     }
+    const meeting = meetingDoc.data() as Meeting;
 
-    const adminEmails = settingsDoc.data()?.adminEmails as string[] | undefined;
-
-    if (adminEmails && adminEmails.includes(user_email)) {
+    if (await isMeetingAdmin(db, meeting, req.auth?.token)) {
       return { status: "OK", isAdmin: true };
     } else {
       return { status: "OK", isAdmin: false };
@@ -169,6 +210,10 @@ export const createProposal = onCall(
       return { status: "ERROR", message: "Meeting not found" };
     }
 
+    if (!await isMeetingParticipant(db, meetingDoc.data() as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "You are not a participant of this meeting.");
+    }
+
     const proposalRef = await meetingRef.collection("proposals").add({
       meetingCode: data.meetingCode,
       proposerName: data.proposerName,
@@ -190,12 +235,6 @@ export const createVotingSession = onCall(
   async (req) => {
     const db = getFirestore();
 
-    // Must be an authenticated admin (Google auth, not anonymous)
-    const userEmail = req.auth?.token.email;
-    if (!userEmail) {
-      throw new HttpsError("unauthenticated", "Admin authentication required.");
-    }
-
     const data = req.data as { meetingCode?: string; proposalIds?: string[], addBlankOption: boolean };
 
     const meetingCode = (data?.meetingCode ?? "").trim();
@@ -212,6 +251,16 @@ export const createVotingSession = onCall(
 
     const meetingRef = db.collection("meetings").doc(meetingCode);
     const settingsRef = meetingRef.collection("meetingSettings").doc("settings");
+
+    const meetingDoc = await meetingRef.get();
+    if (!meetingDoc.exists) {
+      return { status: "ERROR", message: "Meeting not found" };
+    }
+    // has to be admin
+    if (!await isMeetingAdmin(db, meetingDoc.data() as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "Only meeting admins can create voting sessions.");
+    }
+    const userEmail = req.auth?.token.email!;
 
     // Single transaction: authorize + validate proposals + create session
     const result = await db.runTransaction(async (tx) => {
@@ -364,12 +413,6 @@ export const closeProposal = onCall(
   { region: "europe-north1" },
   async (req) => {
     const db = getFirestore();
-
-    const userEmail = req.auth?.token.email;
-    if (!userEmail) {
-      throw new HttpsError("unauthenticated", "Unauthenticated");
-    }
-
     const data = req.data as { meetingCode: string; proposalId: string; closedAs: ProposalCloseReason };
 
     const meetingCode = (data?.meetingCode ?? "").trim();
@@ -390,6 +433,16 @@ export const closeProposal = onCall(
       .doc(meetingCode)
       .collection("proposals")
       .doc(proposalId);
+
+    const meetingDoc = await db.collection("meetings").doc(meetingCode).get();
+    if (!meetingDoc.exists) {
+      return { status: "ERROR", message: "Meeting not found" };
+    }
+    // has to be admin
+    if (!await isMeetingAdmin(db, meetingDoc.data() as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "Only meeting admins can close proposals.");
+    }
+    const userEmail = req.auth?.token.email!;
 
     await db.runTransaction(async (tx) => {
       const settingsSnap = await tx.get(settingsRef);
@@ -429,12 +482,6 @@ export const closeVotingSession = onCall(
   { region: "europe-north1" },
   async (req) => {
     const db = getFirestore();
-
-    const userEmail = req.auth?.token.email;
-    if (!userEmail) {
-      throw new HttpsError("unauthenticated", "Unauthenticated");
-    }
-
     const data = req.data as { meetingCode: string; votingSessionId: string };
 
     const meetingCode = (data?.meetingCode ?? "").trim();
@@ -455,6 +502,16 @@ export const closeVotingSession = onCall(
       .doc(meetingCode)
       .collection("votingSessions")
       .doc(votingSessionId);
+
+    const meetingDoc = await db.collection("meetings").doc(meetingCode).get();
+    if (!meetingDoc.exists) {
+      return { status: "ERROR", message: "Meeting not found" };
+    }
+    // has to be admin
+    if (!await isMeetingAdmin(db, meetingDoc.data() as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "Only meeting admins can close voting sessions.");
+    }
+    const userEmail = req.auth?.token.email!;
 
     await db.runTransaction(async (tx) => {
       const settingsSnap = await tx.get(settingsRef);
@@ -602,7 +659,6 @@ export const editProposal = onCall(
 
     const meetingRef = db.collection("meetings").doc(meetingCode);
     const proposalRef = meetingRef.collection("proposals").doc(proposalId);
-    const settingsRef = meetingRef.collection("meetingSettings").doc("settings");
 
     // Block edits if proposal is in an OPEN voting session
     // (this is what "in voting" typically means)
@@ -617,11 +673,13 @@ export const editProposal = onCall(
       throw new HttpsError("failed-precondition", "Proposal is in an open voting session.");
     }
 
+    const meetingDoc = await meetingRef.get();
+    if (!meetingDoc.exists) {
+      return { status: "ERROR", message: "Meeting not found" };
+    }
+
     await db.runTransaction(async (tx) => {
-      const [proposalSnap, settingsSnap] = await Promise.all([
-        tx.get(proposalRef),
-        tx.get(settingsRef),
-      ]);
+      const proposalSnap = await tx.get(proposalRef);
 
       if (!proposalSnap.exists) {
         throw new HttpsError("not-found", "Proposal not found.");
@@ -636,9 +694,7 @@ export const editProposal = onCall(
       // Authorization:
       // Allow meeting admins OR the original proposer (if you store proposerUid)
       // If you do not have proposerUid, restrict to admins only.
-      const adminEmails = (settingsSnap.exists ? (settingsSnap.data()?.adminEmails ?? []) : []) as string[];
-
-      const isAdmin = !!userEmail && adminEmails.includes(userEmail);
+      const isAdmin = await isMeetingAdmin(db, meetingDoc.data() as Meeting, req.auth?.token);
 
       const proposerUid = typeof proposal.proposerUid === "string" ? proposal.proposerUid : null;
       const isProposer = proposerUid ? proposerUid === uid : false;

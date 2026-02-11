@@ -4,44 +4,34 @@ import { useParams } from "next/navigation";
 import Image from "next/image";
 import React, { useEffect, useRef, useState } from "react";
 import { useUser } from "@/context/UserContext";
-import { Input } from "@heroui/input";
-import { Button } from "@heroui/button";
 import { db } from "@/firebase";
 import { collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, updateDoc } from "@firebase/firestore";
 import { Meeting, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType, VotingSession } from "@/types";
-import { Checkbox, Form, Select, SelectItem, Tooltip, useDisclosure } from "@heroui/react";
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
+import { Input, Checkbox, Form, Select, Tooltip, Modal, Label, Button, ListBox, ListBoxItem, TextField, Surface, Description, Alert } from "@heroui/react";
 import { functions } from "@/firebase";
 import { httpsCallable } from "firebase/functions";
-import { UpcomingSpeech } from "@/components/UpcomingSpeech";
-import { CompletedSpeech } from "@/components/CompletedSpeech";
-import { ACTION_ICON, formatDate, formatDuration } from "@/utils";
-import { ProposalCard } from "@/components/Proposal";
+import { UpcomingSpeechCard } from "@/components/UpcomingSpeechCard";
+import { CompletedSpeechCard } from "@/components/CompletedSpeechCard";
+import { ACTION_ICON, formatDate, formatDuration, SPEECH_TYPE_ICON } from "@/utils";
+import { OpenProposalCard } from "@/components/OpenProposalCard";
 import { useSpeeches } from "@/hooks/useSpeeches";
 import { useProposals } from "@/hooks/useProposals";
 import { useRtdbPresence } from "@/hooks/useRtdbPresence";
 import { useOnlineNowRtdb } from "@/hooks/useOnlineNowRtdb";
+import { useRouter } from "next/navigation";
 
 import { useVotingSessions } from "@/hooks/useVotingSessions";
+import { ClosedProposalCard } from "@/components/ClosedProposalCard";
 
 export default function MeetingPage() {
 
     const { user, loading } = useUser();
+    const router = useRouter();
     const params = useParams();
 
-    const { isOpen: isProposalFormOpen, onOpen: onProposalFormOpen, onOpenChange: onProposalFormOpenChange } = useDisclosure();
-
-    const {
-        isOpen: isVotingSessionModalOpen,
-        onOpen: onVotingSessionModalOpen,
-        onOpenChange: onVotingSessionModalOpenChange,
-    } = useDisclosure();
-
-    const {
-        isOpen: isQuickVoteOpen,
-        onOpen: onQuickVoteOpen,
-        onOpenChange: onQuickVoteOpenChange,
-    } = useDisclosure();
+    const [isProposalFormOpen, setIsProposalFormOpen] = useState(false);
+    const [isVotingSessionModalOpen, setIsVotingSessionModalOpen] = useState(false);
+    const [isQuickVoteOpen, setIsQuickVoteOpen] = useState(false);
 
     const [quickVoteText, setQuickVoteText] = useState("");
     const [quickVoteSaving, setQuickVoteSaving] = useState(false);
@@ -73,7 +63,7 @@ export default function MeetingPage() {
     const [speechTypesForMeeting, setSpeechTypesForMeeting] = useState<SpeechType[] | null>(null);
 
     const [speechDescriptionInput, setSpeechDescriptionInput] = useState("");
-    const [speechTypeInput, setSpeechTypeInput] = useState(new Set<string | null>(null));
+    const [speechTypeInput, setSpeechTypeInput] = useState<string | null>(null);
 
     const [proposalDescriptionInput, setProposalDescriptionInput] = useState("");
     const [isBaseProposal, setIsBaseProposal] = useState(false);
@@ -90,6 +80,14 @@ export default function MeetingPage() {
 
     useRtdbPresence(meeting?.code, userName, rtdbEnabled);
     const { online } = useOnlineNowRtdb(meeting?.code, 60_000, rtdbEnabled);
+
+    useEffect(() => {
+        console.log("User loading state:", loading, "user:", user, "meeting:", meeting?.requireLogin);
+        if (!loading && user && user.isAnonymous && meeting && meeting.requireLogin) {
+            router.push('/login?redirect=/new');
+        }
+    }, [user, loading, router, meeting]);
+
 
     const toggleSelected = (proposalId: string, selected: boolean) => {
         setSelectedProposalIds((prev) => {
@@ -222,7 +220,7 @@ export default function MeetingPage() {
 
     useEffect(() => {
         console.log("Speech types for meeting updated:", speechTypesForMeeting);
-        setSpeechTypeInput(new Set(speechTypesForMeeting?.[0]?.id ? [speechTypesForMeeting[0].id] : []));
+        setSpeechTypeInput(speechTypesForMeeting?.[0]?.id ?? null);
     }, [speechTypesForMeeting]);
 
 
@@ -365,7 +363,7 @@ export default function MeetingPage() {
             if (e) {
                 e.preventDefault();
             }
-            console.log("Adding speech:", speechDescriptionInput, "of type:", Array.from(speechTypeInput)[0], "by user:", userName);
+            console.log("Adding speech:", speechDescriptionInput, "of type:", speechTypeInput, "by user:", userName);
             console.log("To meeting:", meeting);
             if (!meeting) return;
 
@@ -374,14 +372,14 @@ export default function MeetingPage() {
             const result = await createSpeech({
                 meetingCode: meeting.code,
                 description: speechDescriptionInput,
-                type: Array.from(speechTypeInput)[0],
+                type: speechTypeInput,
                 speakerName: userName,
             } as SpeechCreateRequest);
             console.log("Speech added:", result.data);
             // clear inputs
             setSpeechDescriptionInput("");
             if (speechTypesForMeeting && speechTypesForMeeting.length > 0) {
-                setSpeechTypeInput(new Set<string | null>([speechTypesForMeeting[0].id]));
+                setSpeechTypeInput(speechTypesForMeeting[0].id ?? null);
             }
 
             if (!isMeetingAdmin) {
@@ -447,7 +445,7 @@ export default function MeetingPage() {
         }
     };
 
-    const handleCreateQuickYesNoVote = async (onClose: () => void) => {
+    const handleCreateQuickYesNoVote = async () => {
         if (!meeting) return;
         const text = quickVoteText.trim();
         if (!text) return;
@@ -476,7 +474,6 @@ export default function MeetingPage() {
             });
 
             setQuickVoteText("");
-            onClose();
             setSelectedTab("VOTING");
         } catch (e: any) {
             setQuickVoteError(String(e?.message ?? "Failed to create quick vote"));
@@ -514,7 +511,7 @@ export default function MeetingPage() {
         return (proposal.supporterUids ?? []).includes(user.uid);
     };
 
-    const handleAddProposal = async (onClose: () => void) => {
+    const handleAddProposal = async () => {
         try {
             if (!meeting) return;
             console.log("Adding proposal:", proposalDescriptionInput, "by user:", userName);
@@ -529,7 +526,6 @@ export default function MeetingPage() {
             console.log("Proposal added:", result.data);
             // clear input
             setProposalDescriptionInput("");
-            onClose();
         } catch (error) {
             console.error("Error adding proposal:", error);
         }
@@ -694,17 +690,18 @@ export default function MeetingPage() {
     };
 
     const loginScreen = (
-        <div className="flex justify-center items-center flex-col w-full text-foreground bg-background min-h-screen gap-4">
+        <div className="flex justify-center items-center flex-col w-full text-foreground bg-background h-full gap-4">
             <Form onSubmit={handleJoinWithName} validationBehavior="native"
-                className={'flex justify-center items-left flex-col w-full text-foreground bg-background min-h-screen gap-4 w-3/4 lg:w-1/4'}
+                className={'flex justify-center items-left flex-col w-full text-foreground bg-background h-dhv gap-4 w-3/4 lg:w-1/4'}
             >
                 <h2 className="text-2xl lg:text-3xl font-semibold">Syötä nimesi ennen kokoukseen liittymistä</h2>
+                <Label htmlFor="user-name-input">Nimi</Label>
                 <Input
-                    label="Nimesi"
+                    id="user-name-input"
                     placeholder="Anna nimesi"
                     value={userNameInput}
                     ref={nameInputRef}
-                    isRequired
+                    required
                     onChange={(e) => setUserNameInput(e.target.value)}
                 />
                 <Button
@@ -717,13 +714,13 @@ export default function MeetingPage() {
     );
 
     const upcomingSpeechesColumn = (
-        <div className="flex flex-col min-h-0 border border-border lg:overflow-hidden">
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
                 Tulevat puheenvuorot ({upcomingSpeeches.length})
             </h3>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3">
                 {upcomingSpeeches.map((speech, index) => (
-                    <UpcomingSpeech
+                    <UpcomingSpeechCard
                         key={speech.id}
                         speech={speech}
                         next={index === 0}
@@ -760,7 +757,7 @@ export default function MeetingPage() {
     )
 
     const votingColumn = (
-        <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">Äänestys</h3>
 
             <div className="flex-1 min-h-0 overflow-y-auto p-3">
@@ -787,8 +784,7 @@ export default function MeetingPage() {
                                     {isMeetingAdmin && (
                                         <Button
                                             size="sm"
-                                            color="danger"
-                                            variant="light"
+                                            variant="outline"
                                             onPress={() => handleCloseVotingSession(session.votingSessionId)}
                                         >
                                             Sulje äänestys
@@ -810,7 +806,7 @@ export default function MeetingPage() {
                                                 <span className={selected ? "font-semibold" : ""}>{label}</span>
                                                 <Button
                                                     size="sm"
-                                                    variant={selected ? "solid" : "light"}
+                                                    variant={selected ? "primary" : "outline"}
                                                     isDisabled={hasVoted}
                                                     onPress={() => handleCastVote(session.votingSessionId, option.id)}
                                                 >
@@ -851,6 +847,12 @@ export default function MeetingPage() {
                             votesByOption.set(v.voteOptionId, arr);
                         }
 
+                        // check if all the proposals in this voting session are open
+                        const allProposalsOpen = session.voteOptions
+                            .filter((o) => o.type === "PROPOSAL")
+                            .map((o) => o.proposalId)
+                            .every((pid) => openProposals.some((p) => p.id === pid));
+
                         return (
                             <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -865,6 +867,8 @@ export default function MeetingPage() {
                                     <div className="flex items-center gap-3">
                                         <Button
                                             onPress={() => handleCloseProposalsFromVoteResults(session)}
+                                            variant="secondary"
+                                            isDisabled={!allProposalsOpen}
                                         >
                                             Sulje ehdotukset: voittanut hyväksyttynä, hävinneet hylättynä
                                         </Button>
@@ -920,22 +924,26 @@ export default function MeetingPage() {
     );
 
     const proposalsColumn = (
-        <div className="flex flex-1 flex-col min-h-0 border border-border rounded overflow-hidden">
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
                 Avoimet ehdotukset ({openProposals.length})
             </h3>
 
-            <Button className="m-4"
-                onPress={onProposalFormOpen}
-                startContent={<Image src={ACTION_ICON["PROPOSAL"]} alt="Lisää" width={24} height={24} />}
-
+            <Button className="m-4" variant="secondary"
+                onPress={() => setIsProposalFormOpen(true)}
             >
+                <Image src={ACTION_ICON["PROPOSAL"]} alt="Lisää" width={24} height={24} />
                 Tee ehdotus
             </Button>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+            <div
+                className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3"
+                tabIndex={-1}
+                style={{ overflowAnchor: "none" }}
+            >
+
                 {openProposals.map((proposal) => (
-                    <ProposalCard
+                    <OpenProposalCard
                         key={proposal.id}
                         proposal={proposal}
                         isMeetingAdmin={isMeetingAdmin}
@@ -950,25 +958,28 @@ export default function MeetingPage() {
 
                 ))}
             </div>
-            {isMeetingAdmin && selectedProposalIds.size > 0 && (
-                <div className="p-3 border-t border-border">
-                    <Button onPress={onVotingSessionModalOpen}>
-                        Avaa äänestys näistä ehdotuksista ({selectedProposalIds.size})
-                    </Button>
+            {isMeetingAdmin && (
+                <div className="p-3 border-t border-border min-h-[72px] flex items-center">
+                    {selectedProposalIds.size > 0 ? (
+                        <Button onPress={() => setIsVotingSessionModalOpen(true)} variant="secondary">
+                            Avaa äänestys näistä ehdotuksista ({selectedProposalIds.size})
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="secondary"
+                            onPress={() => setIsQuickVoteOpen(true)}
+                        >
+                            Uusi kyllä/ei -pikaäänestys
+                        </Button>
+                    )}
                 </div>
             )}
-            {isMeetingAdmin && selectedProposalIds.size === 0 && (
-                <div className="p-3 border-t border-border">
-                    <Button onPress={onQuickVoteOpen}>
-                        Uusi kyllä/ei -pikaäänestys
-                    </Button>
-                </div>
-            )}
+
         </div>
     );
 
     const ongoingAndCompletedSpeechesColumn = (
-        <div className={`flex flex-col min-h-0 border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
+        <div className={`flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
                 Käynnissä oleva puheenvuoro
             </h3>
@@ -1004,17 +1015,19 @@ export default function MeetingPage() {
                 </div>
             )}
             {ongoingSpeeches.length === 0 && isMeetingAdmin && (
-                <Tooltip content="Ei käynnissä olevaa puheenvuoroa. Voit aloittaa seuraavan tästä" placement="top">
-                    <Button id="start-next-button" className="m-4" onPress={() => {
+                <Tooltip>
+                    <Button id="start-next-button" variant="outline" className="m-4" onPress={() => {
                         if (upcomingSpeeches.length > 0) {
                             handleStartSpeech(upcomingSpeeches[0].id);
                         }
                     }}
-                        isDisabled={upcomingSpeeches.length === 0}
-                        startContent={<Image src={ACTION_ICON["NEXT"]} alt="Aloita" width={24} height={24} />}
-                    >
+                        isDisabled={upcomingSpeeches.length === 0}>
+                        <Image src={ACTION_ICON["NEXT"]} alt="Aloita" width={24} height={24} />
                         Aloita seuraava puheenvuoro
                     </Button>
+                    <Tooltip.Content placement="top">
+                        Ei käynnissä olevaa puheenvuoroa. Voit aloittaa seuraavan tästä
+                    </Tooltip.Content>
                 </Tooltip>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto p-3">
@@ -1028,14 +1041,20 @@ export default function MeetingPage() {
                         </div>
                         {isMeetingAdmin && (
                             <div className="flex flex-col flex-grow justify-end items-center ml-4 gap-2">
-                                <Tooltip content="Lopeta ja aloita seuraava" placement="left">
+                                <Tooltip>
                                     <Button isIconOnly onPress={() => handleCompleteOngoingAndStartNext()}>
                                         <Image src={ACTION_ICON["NEXT"]} alt="Lopeta ja aloita seuraava" width={24} height={24} />
                                     </Button>
+                                    <Tooltip.Content placement="left">
+                                        Lopeta ja aloita seuraava
+                                    </Tooltip.Content>
                                 </Tooltip>
-                                <Tooltip content="Lopeta" placement="left"><Button isIconOnly onPress={() => handleCompleteSpeech(ongoingSpeeches[0].id)}>
+                                <Tooltip><Button isIconOnly onPress={() => handleCompleteSpeech(ongoingSpeeches[0].id)} variant="outline">
                                     <Image src={ACTION_ICON["STOP"]} alt="Lopeta" width={24} height={24} />
                                 </Button>
+                                    <Tooltip.Content placement="left">
+                                        Lopeta tämä puheenvuoro
+                                    </Tooltip.Content>
                                 </Tooltip>
                             </div>
                         )}
@@ -1049,7 +1068,7 @@ export default function MeetingPage() {
                 <div className="flex-1 min-h-0 overflow-y-auto p-3">
                     <ul>
                         {completedSpeeches.map((speech) => (
-                            <CompletedSpeech key={speech.id}
+                            <CompletedSpeechCard key={speech.id}
                                 speech={speech}
                                 speechType={getSpeechTypeById(speech.type)}
                             />
@@ -1058,22 +1077,109 @@ export default function MeetingPage() {
                 </div>
             </div>
         </div>
-
     );
 
-    const speechesTab = <div className="flex-1 min-h-0 lg:overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-3 h-full">
+    const closedProposalsColumn = (
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
+            <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                Hyväksytyt ehdotukset ({acceptedProposals.length})
+            </h3>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                {acceptedProposals.map((proposal) => (
+                    <ClosedProposalCard key={proposal.id} proposal={proposal} isMeetingAdmin={isMeetingAdmin} />
+                ))}
+            </div>
+            <h3 className="text-xl font-semibold p-3 border-b border-t border-border shrink-0">
+                Hylätyt ehdotukset ({rejectedProposals.length})
+            </h3>
+            <div className="flex flex-1 min-h-0 border border-border overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {rejectedProposals.map((proposal) => (
+                        <ClosedProposalCard key={proposal.id} proposal={proposal} isMeetingAdmin={isMeetingAdmin} />
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+
+    const speechesTab = (
+        <div className="flex h-full min-h-0 overflow-hidden">
             {upcomingSpeechesColumn}
             {ongoingAndCompletedSpeechesColumn}
             {proposalsColumn}
         </div>
-    </div>;
+    );
+
 
     const votingTab = (
-        <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+        <div className="flex flex-1 flex-row h-full overflow-hidden">
             {votingColumn}
+            {closedProposalsColumn}
         </div>
     );
+
+    const openVotingSessionsWarning = (
+        <Alert status="warning" className="mb-4">
+            <Alert.Indicator />
+            <Alert.Content>
+                <Alert.Title>Avoimia äänestyksiä {openVotingSessions.length}</Alert.Title>
+                <Alert.Description>
+                    Kokouksessa on jo avoimia äänestyksiä. Varmista, että uusi äänestys ei aiheuta sekaannusta.
+                </Alert.Description>
+            </Alert.Content>
+        </Alert >
+    );
+
+    const footer = (
+        <div className="px-4 py-4 border-t border-border bg-background shrink-0">
+            <div className="flex gap-2 items-center justify-center lg:flex-row">
+                <p>Nimi: {userName}</p>
+
+                <Form
+                    onSubmit={handleAddSpeech}
+                    validationBehavior="native"
+                    className="flex gap-2 flex-column flex-grow lg:flex-row justify-center items-center"
+                >
+                    <Input
+                        className="flex-grow"
+                        ref={descriptionRef}
+                        placeholder="Puheenvuoron kuvaus"
+                        required
+                        value={speechDescriptionInput}
+                        onChange={(e) => setSpeechDescriptionInput(e.target.value)}
+                    />
+                    <Select
+                        className="flex-basis-48"
+                        value={speechTypeInput}
+                        onChange={(value) => setSpeechTypeInput(value as string)}
+                    >
+                        <Select.Trigger>
+                            <Select.Value />
+                            <Select.Indicator />
+                        </Select.Trigger>
+                        <Select.Popover>
+                            <ListBox>
+                                {speechTypesForMeeting && speechTypesForMeeting.map((type) => {
+                                    return (
+                                        <ListBox.Item key={type.id} id={type.id}>
+                                            <div className="flex flex-row justify-start items-center">
+                                                <div className="flex h-8 items-center pt-px">
+                                                    <Image src={SPEECH_TYPE_ICON[type.id]} alt={type.label} width={18} height={18} />
+                                                </div>
+                                                <div className="ml-2 text-sm text-muted">{type.label}</div>
+                                            </div>
+                                        </ListBox.Item>
+                                    )
+                                })}
+                            </ListBox>
+                        </Select.Popover>
+                    </Select>
+                    <Button type="submit" className="flex-shrink-0 whitespace-nowrap">
+                        Lisää puheenvuoro
+                    </Button>
+                </Form>
+            </div>
+        </div>);
 
     const content = selectedTab === "SPEECHES" ? speechesTab : votingTab;
 
@@ -1081,7 +1187,7 @@ export default function MeetingPage() {
     return (
         userName === "" ? loginScreen
             : (
-                <div className="min-h-screen h-screen flex flex-col bg-background text-foreground lg:overflow-hidden">
+                <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
                     {/* Header */}
                     <div className="flex flex-row px-4 py-3 border-b border-border shrink-0 content-center lg:items-center lg:justify-between gap-4">
                         <div>
@@ -1092,13 +1198,13 @@ export default function MeetingPage() {
                             {/** Tab selection */}
                             <div className="flex gap-2 mt-2">
                                 <Button
-                                    variant={selectedTab === "SPEECHES" ? "solid" : "light"}
+                                    variant={selectedTab === "SPEECHES" ? "tertiary" : "outline"}
                                     onPress={() => setSelectedTab("SPEECHES")}
                                 >
                                     Puheenvuorot
                                 </Button>
                                 <Button
-                                    variant={selectedTab === "VOTING" ? "solid" : "light"}
+                                    variant={selectedTab === "VOTING" ? "tertiary" : "outline"}
                                     onPress={() => setSelectedTab("VOTING")}
                                 >
                                     Äänestys
@@ -1108,198 +1214,200 @@ export default function MeetingPage() {
                     </div>
 
                     {/* Main: fills remaining height, does NOT scroll */}
+                    <div className="flex-1 min-h-0 overflow-hidden">
 
-                    {content}
-
-                    {/* Footer: in flow, pinned with sticky */}
-                    <div className="sticky bottom-0 px-4 py-4 border-t border-border bg-background shrink-0">
-                        <div className="flex gap-2 items-center justify-center lg:flex-row">
-                            <p>Nimi: {userName}</p>
-
-                            <Form
-                                onSubmit={handleAddSpeech}
-                                validationBehavior="native"
-                                className="flex gap-2 flex-column flex-grow lg:flex-row justify-center items-center"
-                            >
-                                <Input
-                                    className="flex-grow"
-                                    ref={descriptionRef}
-                                    placeholder="Puheenvuoron kuvaus"
-                                    isRequired
-                                    value={speechDescriptionInput}
-                                    onChange={(e) => setSpeechDescriptionInput(e.target.value)}
-                                />
-                                <Select
-                                    className="flex-basis-48"
-                                    label="Puheenvuoron tyyppi"
-                                    selectedKeys={speechTypeInput as Set<string>}
-                                    onSelectionChange={(keys) => setSpeechTypeInput(keys as Set<string>)}
-                                >
-                                    {speechTypesForMeeting && speechTypesForMeeting.map((type) => (
-                                        <SelectItem key={type.id}>{type.label}</SelectItem>
-                                    ))}
-                                </Select>
-                                <Button type="submit" className="flex-shrink-0 whitespace-nowrap">
-                                    Lisää puheenvuoro
-                                </Button>
-                            </Form>
-                        </div>
+                        {content}
                     </div>
-                    <Modal isOpen={isProposalFormOpen} onOpenChange={onProposalFormOpenChange}>
-                        <ModalContent>
-                            {(onClose) => (
-                                <>
-                                    <ModalHeader className="flex flex-col gap-1">Uusi ehdotus</ModalHeader>
-                                    <ModalBody>
-                                        <Form
-                                            id="proposalForm"
-                                            onSubmit={(e) => {
-                                                e.preventDefault();
-                                                handleAddProposal(onClose);
-                                            }}
-                                        >
-                                            {isMeetingAdmin && (
-                                                <Checkbox
-                                                    isSelected={isBaseProposal}
-                                                    onValueChange={(selected) => setIsBaseProposal(selected)}
-                                                >
-                                                    Pohjaesitys
-                                                </Checkbox>
-                                            )}
-                                            <Input
-                                                label="Ehdotuksen sisältö"
-                                                placeholder="Kuvaa ehdotuksesi tässä..."
-                                                value={proposalDescriptionInput}
-                                                onChange={(e) => setProposalDescriptionInput(e.target.value)}
-                                                isRequired
-                                                autoFocus
-                                            />
+                    {/* Footer: in flow, pinned with sticky */}
+                    {footer}
+                    <Modal>
+                        <Modal.Backdrop isOpen={isProposalFormOpen} onOpenChange={setIsProposalFormOpen}>
+                            <Modal.Container>
+                                <Modal.Dialog>
+                                    <Modal.Header className="flex flex-col gap-1">Uusi ehdotus</Modal.Header>
+                                    <Modal.Body>
+                                        <Surface className="p-3 mt-3">
+                                            <Form
+                                                id="proposalForm"
+                                                onSubmit={(e) => {
+                                                    e.preventDefault();
+                                                    handleAddProposal();
+                                                    setIsProposalFormOpen(false);
+                                                }}
+                                            >
+                                                <TextField>
+                                                    <Label htmlFor="proposal-description-input">Ehdotuksen sisältö</Label>
+                                                    <Input
+                                                        id="proposal-description-input"
+                                                        placeholder="Kuvaa ehdotuksesi tässä..."
+                                                        value={proposalDescriptionInput}
+                                                        onChange={(e) => setProposalDescriptionInput(e.target.value)}
+                                                        required
+                                                        autoFocus
+                                                    />
+                                                </TextField>
+                                                {isMeetingAdmin && (
+                                                    <>
+                                                        <Checkbox
+                                                            id="base-proposal-checkbox"
+                                                            isSelected={isBaseProposal}
+                                                            onChange={(selected) => setIsBaseProposal(selected)}
+                                                            className="relative mt-4"
+                                                            variant="secondary"
+                                                        >
+                                                            <Checkbox.Control>
+                                                                <Checkbox.Indicator />
+                                                            </Checkbox.Control>
+                                                            <Label htmlFor="base-proposal-checkbox">Pohjaesitys</Label>
 
-                                        </Form>
-                                    </ModalBody>
-                                    <ModalFooter>
-                                        <Button color="danger" variant="light" onPress={onClose}>
-                                            Close
+                                                        </Checkbox>
+                                                    </>
+                                                )}
+                                            </Form>
+                                        </Surface>
+                                    </Modal.Body>
+                                    <Modal.Footer>
+                                        <Button variant="danger" onPress={() => setIsProposalFormOpen(false)}>
+                                            Sulje
                                         </Button>
 
-                                        <Button color="primary" type="submit" form="proposalForm">
+                                        <Button variant="primary" type="submit" form="proposalForm">
                                             Lisää
                                         </Button>
-                                    </ModalFooter>
-                                </>
-                            )}
-                        </ModalContent>
+                                    </Modal.Footer>
+                                </Modal.Dialog>
+                            </Modal.Container>
+                        </Modal.Backdrop>
                     </Modal>
-                    <Modal isOpen={isVotingSessionModalOpen} onOpenChange={onVotingSessionModalOpenChange}>
-                        <ModalContent>
-                            {(onClose) => (
-                                <>
-                                    <ModalHeader className="flex flex-col gap-1">Avaa äänestys</ModalHeader>
-                                    <ModalBody>
-                                        <p>
-                                            Olet avaamassa äänestyksen valituista ehdotuksista ({selectedProposalIds.size} kpl).
-                                        </p>
-                                        <p>
-                                            Äänestyksen avaamisen jälkeen ehdotuksia ei voi muokata.
-                                            Ehdotuksista äänestetään vastakkain.
-                                        </p>
-                                        <p className="text-sm opacity-70">
-                                            Äänestys avautuu heti kaikille kokouksen osallistujille.
-                                        </p>
-                                        <Checkbox
-                                            isSelected={addBlankOption}
-                                            onValueChange={(selected) => setAddBlankOption(selected)}
-                                        >
-                                            Lisää tyhjä vaihtoehto
-                                        </Checkbox>
-                                        <div>
-                                            {Array.from(selectedProposalIds).map((id) => {
-                                                const proposal = openProposals.find((p) => p.id === id);
-                                                if (!proposal) return null;
+                    <Modal>
+                        <Modal.Backdrop isOpen={isVotingSessionModalOpen} onOpenChange={setIsVotingSessionModalOpen}>
+                            <Modal.Container>
+                                <Modal.Dialog>
+                                    <Modal.Header className="flex flex-col gap-1">Avaa äänestys</Modal.Header>
+                                    <Modal.Body>
+                                        <Surface className="p-3">
+                                            <p>
+                                                Olet avaamassa äänestyksen valituista ehdotuksista ({selectedProposalIds.size} kpl).
+                                            </p>
+                                            <p>
+                                                Äänestyksen avaamisen jälkeen ehdotuksia ei voi muokata.
+                                                Ehdotuksista äänestetään vastakkain.
+                                            </p>
+                                            <p className="text-sm opacity-70">
+                                                Äänestys avautuu heti kaikille kokouksen osallistujille.
+                                            </p>
+                                            <div className="flex items-center gap-3 mt-4 mb-2">
+                                                <Checkbox
+                                                    id="add-blank-option-checkbox"
+                                                    isSelected={addBlankOption}
+                                                    onChange={(selected) => setAddBlankOption(selected)}
+                                                >
+                                                    <Checkbox.Control>
+                                                        <Checkbox.Indicator />
+                                                    </Checkbox.Control>
+                                                </Checkbox>
+                                                <Label htmlFor="add-blank-option-checkbox">Lisää tyhjä vaihtoehto</Label>
+                                            </div>
+                                            <div>
+                                                {Array.from(selectedProposalIds).map((id) => {
+                                                    const proposal = openProposals.find((p) => p.id === id);
+                                                    if (!proposal) return null;
 
-                                                return (
-                                                    <div key={id} className="px-2 py-1 border border-border rounded mb-1">
-                                                        {proposal.description}
+                                                    return (
+                                                        <div key={id} className="px-2 py-1 border border-border rounded mb-1">
+                                                            {proposal.description}
+                                                        </div>
+                                                    );
+                                                })}
+                                                {addBlankOption && (
+                                                    <div className="px-2 py-1 border border-border rounded mb-1">
+                                                        Tyhjä
                                                     </div>
-                                                );
-                                            })}
-                                            {addBlankOption && (
-                                                <div className="px-2 py-1 border border-border rounded mb-1">
-                                                    Tyhjä
-                                                </div>
+                                                )}
+                                            </div>
+                                            {openVotingSessions.length > 0 && (
+                                                openVotingSessionsWarning
                                             )}
-                                        </div>
-                                    </ModalBody>
-                                    <ModalFooter>
-                                        <Button variant="light" onPress={onClose}>
+                                        </Surface>
+                                    </Modal.Body>
+                                    <Modal.Footer>
+                                        <Button variant="outline" onPress={() => setIsVotingSessionModalOpen(false)}>
                                             Peruuta
                                         </Button>
                                         <Button
-                                            color="primary"
+                                            variant="primary"
                                             onPress={async () => {
                                                 await handleCreateVotingSession();
-                                                onClose();
+                                                setIsVotingSessionModalOpen(false);
                                             }}
                                         >
                                             Avaa äänestys
                                         </Button>
-                                    </ModalFooter>
-                                </>
-                            )}
-                        </ModalContent>
+                                    </Modal.Footer>
+                                </Modal.Dialog>
+                            </Modal.Container>
+                        </Modal.Backdrop>
                     </Modal>
-                    <Modal isOpen={isQuickVoteOpen} onOpenChange={onQuickVoteOpenChange}>
-                        <ModalContent>
-                            {(onClose) => (
-                                <>
-                                    <ModalHeader className="flex flex-col gap-1">Uusi kyllä/ei -pikaäänestys</ModalHeader>
-                                    <ModalBody>
+                    <Modal>
+                        <Modal.Backdrop isOpen={isQuickVoteOpen} onOpenChange={setIsQuickVoteOpen}>
+                            <Modal.Container>
+                                <Modal.Dialog>
+                                    <Modal.Header className="flex flex-col gap-1">Uusi kyllä/ei -pikaäänestys</Modal.Header>
+                                    <Modal.Body>
                                         <p className="text-sm opacity-80">
                                             Luodaan uusi ehdotus ja avataan siitä heti kyllä/ei-äänestys.
                                         </p>
+                                        <Surface className="p-3 mt-3">
+                                            <Form
+                                                id="quickYesNoVoteForm"
+                                                onSubmit={(e) => {
+                                                    e.preventDefault();
+                                                    handleCreateQuickYesNoVote();
+                                                    setIsQuickVoteOpen(false);
 
-                                        <Form
-                                            id="quickYesNoVoteForm"
-                                            onSubmit={(e) => {
-                                                e.preventDefault();
-                                                handleCreateQuickYesNoVote(onClose);
-                                            }}
-                                        >
-                                            <Input
-                                                label="Ehdotuksen teksti"
-                                                placeholder="Kirjoita kysymys tai ehdotus..."
-                                                value={quickVoteText}
-                                                onChange={(e) => setQuickVoteText(e.target.value)}
-                                                isRequired
-                                                autoFocus
-                                                isDisabled={quickVoteSaving}
-                                            />
-                                        </Form>
-
-                                        {quickVoteError && (
-                                            <div className="text-sm text-danger">
-                                                {quickVoteError}
-                                            </div>
-                                        )}
-                                    </ModalBody>
-                                    <ModalFooter>
-                                        <Button variant="light" onPress={onClose} isDisabled={quickVoteSaving}>
+                                                }}
+                                            >
+                                                <TextField>
+                                                    <Label htmlFor="quick-vote-textarea">Ehdotuksen sisältö</Label>
+                                                    <Input
+                                                        id="quick-vote-textarea"
+                                                        placeholder="Kirjoita kysymys tai ehdotus..."
+                                                        value={quickVoteText}
+                                                        onChange={(e) => setQuickVoteText(e.target.value)}
+                                                        required
+                                                        autoFocus
+                                                        disabled={quickVoteSaving}
+                                                    />
+                                                </TextField>
+                                            </Form>
+                                            {openVotingSessions.length > 0 && (
+                                                openVotingSessionsWarning
+                                            )}
+                                            {quickVoteError && (
+                                                <div className="text-sm text-danger">
+                                                    {quickVoteError}
+                                                </div>
+                                            )}
+                                        </Surface>
+                                    </Modal.Body>
+                                    <Modal.Footer>
+                                        <Button variant="outline" onPress={() => setIsQuickVoteOpen(false)} isDisabled={quickVoteSaving}>
                                             Peruuta
                                         </Button>
                                         <Button
-                                            color="primary"
+                                            variant="primary"
                                             type="submit"
                                             form="quickYesNoVoteForm"
                                             isDisabled={quickVoteSaving || !quickVoteText.trim()}
                                         >
                                             Avaa äänestys
                                         </Button>
-                                    </ModalFooter>
-                                </>
-                            )}
-                        </ModalContent>
+                                    </Modal.Footer>
+                                </Modal.Dialog>
+                            </Modal.Container>
+                        </Modal.Backdrop>
                     </Modal>
-                </div>
+                </div >
             )
     );
 }

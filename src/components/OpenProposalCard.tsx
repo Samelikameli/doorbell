@@ -3,27 +3,23 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Proposal, ProposalCloseReason } from "@/types";
 import {
   Button,
-  Checkbox,
   Chip,
   Form,
   Input,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
   Tooltip,
-  useDisclosure,
+  Label,
   Dropdown,
+  Surface,
+  TextField,
   DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
+  Checkbox,
 } from "@heroui/react";
 import { formatDate } from "@/utils";
 import { ACTION_ICON } from "@/utils";
 import { User } from "firebase/auth";
 
-export function ProposalCard({
+export function OpenProposalCard({
   proposal,
   user,
   isMeetingAdmin,
@@ -44,11 +40,11 @@ export function ProposalCard({
   onClose: (proposalId: string, closedAs: ProposalCloseReason) => void;
   onEdit: (proposalId: string, newDescription: string) => Promise<void> | void;
 }) {
-  const { isOpen, onOpen, onOpenChange } = useDisclosure();
 
   const [draft, setDraft] = useState(proposal.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const isClosed = proposal.open === false;
   const isSupportedByMe = proposal.supporterUids?.includes(user?.uid ?? "") ?? false;
@@ -60,7 +56,7 @@ export function ProposalCard({
     setError("");
   }, [proposal.description]);
 
-  const submitEdit = async (close: () => void) => {
+  const submitEdit = async () => {
     const next = draft.trim();
     if (!next) return;
 
@@ -69,7 +65,6 @@ export function ProposalCard({
 
     try {
       await onEdit(proposal.id, next);
-      close();
     } catch (e: any) {
       setError(String(e?.message ?? "Edit failed"));
     } finally {
@@ -103,26 +98,29 @@ export function ProposalCard({
                 <span className="text-sm text-foreground/70">ehdottaa</span>
 
                 {proposal.baseProposal && (
-                  <Tooltip
-                    content="Pohjaesitys. Pohjaesitystä ei tarvitse kannattaa, ja se tulee päätökseksi jos muita ehdotuksia ei ole."
-                    placement="top"
-                  >
+                  <Tooltip>
                     <span className="inline-flex items-center gap-1">
 
-                      <Chip variant="flat" color="primary"
-                        startContent={<Image
+                      <Chip color="accent">
+                        <Image
                           src={ACTION_ICON["BASE_PROPOSAL"]}
                           alt="Pohjaesitys"
                           width={18}
                           height={18}
-                        />}
-                      >
-                        Pohjaesitys</Chip>
+                        />
+                        <Chip.Label>
+                          Pohjaesitys
+                        </Chip.Label>
+                      </Chip>
                     </span>
+                    <Tooltip.Content>
+                      Pohjaesitys. Pohjaesitystä ei tarvitse kannattaa, ja se tulee päätökseksi jos muita ehdotuksia ei ole.
+                    </Tooltip.Content>
                   </Tooltip>
+
                 )}
 
-                {isClosed && <Chip variant="flat" color="danger">Suljettu</Chip>}
+                {isClosed && <Chip color="danger"><Chip.Label>Suljettu</Chip.Label></Chip>}
               </div>
 
               <div className="text-xs text-foreground/60 mt-1">
@@ -146,13 +144,11 @@ export function ProposalCard({
                 {!proposal.baseProposal && (
                   <Button
                     size="sm"
-                    variant="flat"
+                    variant="outline"
                     onPress={onSupportToggle}
                     isDisabled={isClosed || isProposalByMe}
-                    startContent={
-                      <Image src={ACTION_ICON["SUPPORT"]} alt="Kannata" width={18} height={18} />
-                    }
                   >
+                    <Image src={ACTION_ICON["SUPPORT"]} alt="Kannata" width={18} height={18} />
                     {isSupportedByMe ? "Peru kannatus" : "Kannata"}
                   </Button>
                 )}
@@ -160,15 +156,15 @@ export function ProposalCard({
                 {isMeetingAdmin && isProposalByMe && (
                   <Button
                     size="sm"
-                    variant="flat"
+                    variant="outline"
                     onPress={() => {
                       setDraft(proposal.description ?? "");
                       setError("");
-                      onOpen();
+                      setIsEditModalOpen(true);
                     }}
                     isDisabled={isClosed}
-                    startContent={<Image src={ACTION_ICON["EDIT"]} alt="Muokkaa" width={18} height={18} />}
                   >
+                    <Image src={ACTION_ICON["EDIT"]} alt="Muokkaa" width={18} height={18} />
                     Muokkaa
                   </Button>
                 )}
@@ -177,62 +173,72 @@ export function ProposalCard({
               {isMeetingAdmin && (
                 <div className="flex flex-wrap gap-2 items-center">
                   <Dropdown>
-                    <DropdownTrigger>
-                      <Button size="sm" variant="flat" color="danger" isDisabled={isClosed}>
-                        Sulje
-                      </Button>
-                    </DropdownTrigger>
-                    <DropdownMenu aria-label="Sulje ehdotus" disabledKeys={isClosed ? ["accepted", "rejected"] : []}>
-                      <DropdownItem
-                        key="accepted"
-                        onPress={() => onClose(proposal.id, "ACCEPTED")}
-                        description="Merkitse hyväksytyksi"
-                      >
-                        Hyväksytty
-                      </DropdownItem>
-                      <DropdownItem
-                        key="rejected"
-                        onPress={() => onClose(proposal.id, "REJECTED")}
-                        description="Merkitse hylätyksi"
-                      >
-                        Hylätty
-                      </DropdownItem>
-                    </DropdownMenu>
+                    <Dropdown.Trigger>
+                      <span className="button button--md button--danger-soft">Sulje</span>
+                    </Dropdown.Trigger>
+                    <Dropdown.Popover>
+                      <Dropdown.Menu aria-label="Sulje ehdotus" disabledKeys={isClosed ? ["accepted", "rejected"] : []}>
+                        <Dropdown.Item
+                          key="accepted"
+                          onPress={() => onClose(proposal.id, "ACCEPTED")}
+                          textValue="Merkitse hyväksytyksi"
+                        >
+                          Hyväksytty
+                        </Dropdown.Item>
+                        <Dropdown.Item
+                          key="rejected"
+                          onPress={() => onClose(proposal.id, "REJECTED")}
+                          textValue="Merkitse hylätyksi"
+                        >
+                          Hylätty
+                        </Dropdown.Item>
+                      </Dropdown.Menu>
+                    </Dropdown.Popover>
                   </Dropdown>
-
                 </div>
               )}
             </div>
 
+
+
             {isMeetingAdmin && (
-              <div className="pt-2 border-t border-border/70">
+              <div className="flex flex-row gap-3 pt-2 border-t border-border/70">
                 <Checkbox
+                  id={`select-for-decision-${proposal.id}`}
                   isSelected={selectedForDecision}
-                  onValueChange={(selected) => onToggleSelectedForDecision(proposal.id, selected)}
+                  onChange={(isSelected) => onToggleSelectedForDecision(proposal.id, isSelected)}
                   isDisabled={isClosed}
+                  variant="secondary"
+                  className="relative" // this is needed, because aria-components use absolute positioning, which breaks the layout
                 >
-                  Valitse äänestykseen
+                  <Checkbox.Control>
+                    <Checkbox.Indicator />
+                  </Checkbox.Control>
                 </Checkbox>
+                <Label htmlFor={`select-for-decision-${proposal.id}`}>Valitse äänestykseen</Label>
               </div>
             )}
           </div>
         </div>
-      </div>
+      </div >
 
-      {/* Edit modal */}
-      <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-        <ModalContent>
-          {(close) => (
-            <>
-              <ModalHeader className="flex flex-col gap-1">Muokkaa ehdotusta</ModalHeader>
-              <ModalBody>
+      <Modal.Backdrop isOpen={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <Modal.Container>
+          <Modal.Dialog className="sm:max-w-md">
+            <Modal.Header className="flex flex-col gap-1">
+              <Modal.Heading>Muokkaa ehdotusta</Modal.Heading>
+            </Modal.Header>
+
+            <Modal.Body className="p-4">
+              <Surface>
                 <div className="text-sm text-foreground/80">
                   Huomio: muokkaus poistaa kaikki kannattajat.
                 </div>
 
                 {proposal.baseProposal && (
                   <div className="text-sm font-semibold">
-                    Pohjaesitys. Älä muuta sisältöä, vain muotoilua. Tee tarvittaessa uusi ehdotus muutoksesta.
+                    Pohjaesitys. Älä muuta sisältöä, vain muotoilua. Tee tarvittaessa uusi ehdotus
+                    muutoksesta.
                   </div>
                 )}
 
@@ -240,38 +246,47 @@ export function ProposalCard({
                   id={`editProposalForm:${proposal.id}`}
                   onSubmit={(e) => {
                     e.preventDefault();
-                    submitEdit(close);
+                    submitEdit();
+                    setIsEditModalOpen(false);
                   }}
                 >
-                  <Input
-                    label="Ehdotuksen sisältö"
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    isRequired
-                    autoFocus
-                    isDisabled={saving}
-                  />
+
+                  <TextField>
+                    <Label htmlFor={`editProposalForm:${proposal.id}:description`}>
+                      Ehdotuksen sisältö
+                    </Label>
+                    <Input id={`editProposalForm:${proposal.id}:description`}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      required
+                      autoFocus
+                      disabled={saving}>
+                    </Input>
+                  </TextField>
                 </Form>
 
                 {error && <div className="text-sm text-danger">{error}</div>}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={close} isDisabled={saving}>
-                  Peruuta
-                </Button>
-                <Button
-                  color="primary"
-                  type="submit"
-                  form={`editProposalForm:${proposal.id}`}
-                  isDisabled={saving || isClosed}
-                >
-                  Tallenna
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-    </div>
+              </Surface>
+            </Modal.Body>
+
+            <Modal.Footer className="flex gap-2 sm:flex-row sm:justify-end">
+              <Button className="w-full sm:w-auto" variant="secondary" slot="close" isDisabled={saving}>
+                Peruuta
+              </Button>
+              <Button
+                className="w-full sm:w-auto"
+                variant="primary"
+                type="submit"
+                form={`editProposalForm:${proposal.id}`}
+                isDisabled={saving || isClosed}
+              >
+                Tallenna
+              </Button>
+            </Modal.Footer>
+
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </div >
   );
 }

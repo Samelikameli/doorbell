@@ -8,8 +8,10 @@ export interface UserContextValue {
 export interface Meeting {
     code: string;
     name: string;
+    startsAt: Date | null;
     createdAt: Date;
     createdBy: string;
+    requireLogin: boolean;
 }
 
 export interface Speech {
@@ -41,6 +43,8 @@ export interface Proposal {
     supporterNames?: string[];
     open: boolean;
     closedAs?: ProposalCloseReason;
+    closedAt?: Date;
+    closedBy?: string;
     baseProposal: boolean; // pohjaesitys
 }
 
@@ -74,7 +78,7 @@ export interface Vote {
     createdAt: Date;
 }
 
-export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy">;
+export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy"> ;
 
 export type SpeechCreateRequest = Omit<Speech, "id" | "createdAt" | "started" | "startedAt" | "completed" | "completedAt" | "skipped" | "priority" | "ordinal">;
 

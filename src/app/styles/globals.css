@@ -1,0 +1,51 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+
+html,
+body {
+  height: 100dvh;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  height: 100%;
+  width: 100%;
+}
+
+
+* {
+  overflow-anchor: none;
+}
+
+/* globals.css */
+::selection {
+  background: rgba(59, 130, 246, 0.35);
+  /* pick any visible color */
+  color: inherit;
+}
+
+/*
+ * HeroUI Theme Customization
+ * Add this to your global.css after importing @heroui/styles
+ * Only includes base variables from variables.css
+ * @see https://v3.heroui.com/docs/react/getting-started/theming
+ */
+
+:root,
+.light,
+.default,
+[data-theme="light"],
+[data-theme="default"],
+[data-theme="dark"] {
+
+  /* Border Radius */
+  --radius: 0.25rem;
+  --field-radius: 0.75rem;
+
+}

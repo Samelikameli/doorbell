@@ -21,6 +21,7 @@ function mapProposal(docSnap: any): Proposal {
     ...data,
     id: docSnap.id,
     createdAt: data.createdAt?.toDate?.() ?? new Date(0),
+    closedAt: data.closedAt?.toDate?.() ?? undefined,
   } as Proposal;
 }
 

@@ -3,7 +3,7 @@ import { Speech, SpeechType } from "@/types";
 import { formatDate, formatDuration, SPEECH_TYPE_ICON } from "@/utils";
 
 
-export function CompletedSpeech({
+export function CompletedSpeechCard({
     speech,
     speechType,
 }: {

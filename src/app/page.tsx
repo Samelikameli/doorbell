@@ -3,8 +3,7 @@
 //import { useUser } from "@/context/UserContext";
 import { db } from "@/firebase";
 import { useRouter } from "next/navigation";
-import { Button } from "@heroui/button";
-import { Input } from "@heroui/input";
+import { Button, Input } from "@heroui/react";
 import { doc, getDoc } from "firebase/firestore";
 
 import { useEffect, useState } from "react";
@@ -55,7 +54,7 @@ export default function FrontPage() {
         />
         <Button
           isDisabled={code.length === 0 || !validCode}
-          isLoading={checking}
+          isPending={checking}
           onPress={() => router.push(`/m/${code}`)}
         >
           Liity kokoukseen
