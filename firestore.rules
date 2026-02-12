@@ -39,7 +39,7 @@ service cloud.firestore {
       match /speeches/{speechId} {
         allow create: if false;
         allow read: if true;
-        allow update: if isMeetingAdmin();
+        allow update: if isMeetingAdmin() || (request.auth != null && request.auth.uid == resource.data.speakerUid);
         allow delete: if false;
       }
 

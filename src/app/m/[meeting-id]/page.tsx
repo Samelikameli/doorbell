@@ -7,7 +7,7 @@ import { useUser } from "@/context/UserContext";
 import { db } from "@/firebase";
 import { collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, updateDoc } from "@firebase/firestore";
 import { Meeting, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType, VotingSession } from "@/types";
-import { Input, Checkbox, Form, Select, Tooltip, Modal, Label, Button, ListBox, ListBoxItem, TextField, Surface, Description, Alert, RadioGroup, Radio, FieldError } from "@heroui/react";
+import { Input, Checkbox, Form, Select, Tooltip, Modal, Label, Button, ListBox, ListBoxItem, TextField, Surface, Description, Alert, RadioGroup, Radio, FieldError, Dropdown } from "@heroui/react";
 import { functions } from "@/firebase";
 import { httpsCallable } from "firebase/functions";
 import { UpcomingSpeechCard } from "@/components/UpcomingSpeechCard";
@@ -669,15 +669,19 @@ export default function MeetingPage() {
     );
 
     const onlineNow = (
-        <div className="p-3 border border-border rounded">
-            <div className="font-semibold">Online ({online.length})</div>
-            <ul className="mt-2 space-y-1 text-sm">
-                {online.map((u) => (
-                    <li key={u.name}>
-                        {u.name}{" "}
-                    </li>
-                ))}
-            </ul>
+        <div className="p-3">
+            <Dropdown>
+                <Button variant="outline" className="font-semibold">Online ({online.length})</Button>
+                <Dropdown.Popover className="w-48 p-2">
+                    <ul className="space-y-1 text-sm">
+                        {online.map((u) => (
+                            <li key={u.name}>
+                                {u.name}
+                            </li>
+                        ))}
+                    </ul>
+                </Dropdown.Popover>
+            </Dropdown>
         </div>
     )
 
@@ -910,11 +914,22 @@ export default function MeetingPage() {
         </div>
     );
 
+    const agendaColumn = (
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
+            <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
+                Esityslista
+            </h3>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                <p>Esityslistaominaisuus on tulossa pian!</p>
+            </div>
+        </div>
+    );
 
     const votingTab = (
         <div className="flex flex-1 flex-row h-full overflow-hidden">
             {votingColumn}
             {closedProposalsColumn}
+            {agendaColumn}
         </div>
     );
 

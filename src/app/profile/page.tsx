@@ -1,62 +1,23 @@
 "use client";
 
-import { useUser } from "@/context/UserContext";
-import { Button } from "@heroui/react";
-import { collectionGroup, documentId, onSnapshot, query, where } from "firebase/firestore";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import React, { useEffect, useState } from "react";
-import { db } from "@/firebase";
+import { Button } from "@heroui/react";
 
-function isPermissionError(e: unknown): boolean {
-  const anyE = e as any;
-  const code = String(anyE?.code ?? "");
-  const msg = String(anyE?.message ?? "").toLowerCase();
-  return code.includes("permission") || msg.includes("missing or insufficient permissions");
-}
+import { useUser } from "@/context/UserContext";
+import { useAdminMeetings } from "@/hooks/useAdminMeetings";
 
 export default function Profile() {
   const { user, loading: userLoading } = useUser();
   const router = useRouter();
 
-  const [meetingIds, setMeetingIds] = useState<string[]>([]);
-  const [err, setErr] = useState<string>("");
+  const { meetings, loading, error } = useAdminMeetings(user, userLoading);
 
   useEffect(() => {
     if (!userLoading && user && user.isAnonymous) {
       router.push("/login?redirect=/profile");
     }
   }, [user, userLoading, router]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    setErr("");
-    setMeetingIds([]);
-
-    // This matches rules that allow listing meetingAdmins when resource.data.uid == request.auth.uid.
-    // Each admin marker doc should contain: { uid: "<same uid as doc id>" }.
-
-    const q = query(
-      collectionGroup(db, "meetingAdmins"),
-      where("uid", "==", user.uid)
-    );
-
-
-    // eslint-disable-next-line no-console
-    console.debug("[Profile] subscribe meetingAdmins group", { uid: user.uid });
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        console.log("fromCache", snap.metadata.fromCache, "size", snap.size);
-        console.log("paths", snap.docs.map(d => d.ref.path));
-      },
-      (e) => console.error("listener error", e)
-    );
-
-
-    return () => unsub();
-  }, [user]);
 
   return (
     <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
@@ -65,27 +26,69 @@ export default function Profile() {
       </div>
 
       <div className="flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden">
-        <div className="flex flex-col">
-          <h1 className="text-2xl font-bold">Kokoukset</h1>
-
+        <div className="flex flex-col p-4 gap-4 overflow-auto">
+          <div className="flex flex-row">
+            <h1 className="text-2xl font-bold">Kokoukset</h1>
+            <Button
+              size="sm"
+              variant="outline"
+              onPress={() => router.push("/new")}
+              className="ml-auto"
+            >
+              Luo uusi kokous
+            </Button>
+          </div>
           <div className="w-full max-w-2xl border border-border rounded p-4">
-            <div className="font-semibold mb-2">Kokoukset, joissa olet ylläpitäjä</div>
+            <div className="font-semibold mb-2">
+              Kokoukset, joissa olet ylläpitäjä
+            </div>
 
-            {err ? (
-              <p className="text-sm text-danger">{err}</p>
-            ) : meetingIds.length === 0 ? (
-              <p className="text-sm opacity-70">Ei ylläpidettäviä kokouksia.</p>
-            ) : (
-              <ul className="text-sm space-y-1">
-                {meetingIds.map((id) => (
-                  <li key={id} className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{id}</span>
+            {loading && (
+              <p className="text-sm opacity-70">Ladataan…</p>
+            )}
+
+            {error && (
+              <p className="text-sm text-danger">{error.message}</p>
+            )}
+
+            {!loading && !error && meetings.length === 0 && (
+              <p className="text-sm opacity-70">
+                Ei ylläpidettäviä kokouksia.
+              </p>
+            )}
+
+            {!loading && !error && meetings.length > 0 && (
+              <ul className="text-sm space-y-2">
+                {meetings.map((m) => (
+                  <li
+                    key={m.code}
+                    className="flex items-center justify-between gap-3 border-b border-border pb-2"
+                  >
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-medium truncate">
+                        {m.name || "(Nimetön kokous)"}
+                      </span>
+
+                      <span className="text-xs opacity-70">
+                        Koodi: {m.code}
+                        {" · "}
+                        {m.isPublic ? "Julkinen" : "Yksityinen"}
+                        {m.startsAt && (
+                          <>
+                            {" · "}
+                            alkaa{" "}
+                            {m.startsAt.toLocaleString("fi-FI")}
+                          </>
+                        )}
+                      </span>
+                    </div>
+
                     <Button
                       size="sm"
                       variant="outline"
-                      onPress={() => router.push(`/meetings/${id}`)}
+                      onPress={() => router.push(`/m/${m.code}`)}
                     >
-                      Avaa
+                      Liity kokoukseen
                     </Button>
                   </li>
                 ))}

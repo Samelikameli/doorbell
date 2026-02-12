@@ -19,6 +19,7 @@ export interface Meeting {
 
 export interface Speech {
     speakerName: string;
+    speakerUid: string;
     description: string;
     createdAt: Date;
     started: boolean;

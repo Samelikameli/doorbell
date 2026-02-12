@@ -93,7 +93,9 @@ export const createSpeech = onCall(
     region: "europe-north1",
   },
   async (req) => {
-    if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Authentication required.");
+    if (!req.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
 
 
     const db = getFirestore();
@@ -137,6 +139,7 @@ export const createSpeech = onCall(
       // Create speech with ordinal
       tx.set(speechRef, {
         speakerName: data.speakerName,
+        speakerUid: req.auth!.uid,
         description: data.description,
         createdAt: FieldValue.serverTimestamp(),
         started: false,
