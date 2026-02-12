@@ -12,7 +12,6 @@ import {
   Dropdown,
   Surface,
   TextField,
-  DropdownTrigger,
   Checkbox,
 } from "@heroui/react";
 import { formatDate } from "@/utils";
@@ -40,7 +39,6 @@ export function OpenProposalCard({
   onClose: (proposalId: string, closedAs: ProposalCloseReason) => void;
   onEdit: (proposalId: string, newDescription: string) => Promise<void> | void;
 }) {
-
   const [draft, setDraft] = useState(proposal.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
@@ -50,7 +48,6 @@ export function OpenProposalCard({
   const isSupportedByMe = proposal.supporterUids?.includes(user?.uid ?? "") ?? false;
   const isProposalByMe = proposal.proposerUid === user?.uid;
 
-  // Keep draft in sync when proposal updates live
   useEffect(() => {
     setDraft(proposal.description ?? "");
     setError("");
@@ -74,6 +71,20 @@ export function OpenProposalCard({
 
   const createdLabel = useMemo(() => formatDate(proposal.createdAt), [proposal.createdAt]);
 
+  const supporterNames = useMemo(() => {
+    const names = Array.isArray(proposal.supporterNames) ? proposal.supporterNames : [];
+    const cleaned = names.map((n) => (n ?? "").trim()).filter(Boolean);
+    return Array.from(new Set(cleaned));
+  }, [proposal.supporterNames]);
+
+  const supporterPreview = useMemo(() => {
+    if (supporterNames.length === 0) return "";
+    const max = 3;
+    const head = supporterNames.slice(0, max).join(", ");
+    const tail = supporterNames.length > max ? ` +${supporterNames.length - max}` : "";
+    return `${head}${tail}`;
+  }, [supporterNames]);
+
   return (
     <div
       className={[
@@ -82,7 +93,6 @@ export function OpenProposalCard({
         isClosed ? "opacity-80" : "",
       ].join(" ")}
     >
-      {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 mt-0.5">
           <Image src={ACTION_ICON["PROPOSAL"]} alt="Ehdotus" width={34} height={34} />
@@ -92,15 +102,12 @@ export function OpenProposalCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold break-words">
-                  {proposal.proposerName}
-                </span>
+                <span className="font-semibold break-words">{proposal.proposerName}</span>
                 <span className="text-sm text-foreground/70">ehdottaa</span>
 
                 {proposal.baseProposal && (
                   <Tooltip>
                     <span className="inline-flex items-center gap-1">
-
                       <Chip color="accent">
                         <Image
                           src={ACTION_ICON["BASE_PROPOSAL"]}
@@ -108,29 +115,45 @@ export function OpenProposalCard({
                           width={18}
                           height={18}
                         />
-                        <Chip.Label>
-                          Pohjaesitys
-                        </Chip.Label>
+                        <Chip.Label>Pohjaesitys</Chip.Label>
                       </Chip>
                     </span>
                     <Tooltip.Content>
                       Pohjaesitys. Pohjaesitystä ei tarvitse kannattaa, ja se tulee päätökseksi jos muita ehdotuksia ei ole.
                     </Tooltip.Content>
                   </Tooltip>
-
                 )}
 
-                {isClosed && <Chip color="danger"><Chip.Label>Suljettu</Chip.Label></Chip>}
+                {isClosed && (
+                  <Chip color="danger">
+                    <Chip.Label>Suljettu</Chip.Label>
+                  </Chip>
+                )}
               </div>
 
-              <div className="text-xs text-foreground/60 mt-1">
-                Tehty {createdLabel}
-              </div>
+              <div className="text-xs text-foreground/60 mt-1">Tehty {createdLabel}</div>
             </div>
 
             {!proposal.baseProposal && (
-              <div className="flex-shrink-0 text-xs text-foreground/70">
+              <div className="flex-shrink-0 text-xs text-foreground/70 flex flex-col items-end gap-1">
                 <span className="whitespace-nowrap">Kannatus: {supportCount}</span>
+
+                {supporterNames.length > 0 && (
+                  <Tooltip>
+                    <span className="whitespace-nowrap">
+                      <span className="text-foreground/60">Kannattajat:</span>{" "}
+                      <span className="font-medium">{supporterPreview}</span>
+                    </span>
+                    <Tooltip.Content>
+                      <div className="max-w-sm">
+                        <div className="font-semibold mb-1">Kannattajat</div>
+                        <div className="text-sm whitespace-pre-wrap break-words">
+                          {supporterNames.join(", ")}
+                        </div>
+                      </div>
+                    </Tooltip.Content>
+                  </Tooltip>
+                )}
               </div>
             )}
           </div>
@@ -138,6 +161,7 @@ export function OpenProposalCard({
           <div className="mt-3 text-sm whitespace-pre-wrap break-words leading-relaxed">
             {proposal.description}
           </div>
+
           <div className="flex flex-col gap-2 mt-4">
             <div className="mt-4 flex flex-row gap-2">
               <div className="flex flex-wrap gap-2 items-center">
@@ -177,7 +201,10 @@ export function OpenProposalCard({
                       <span className="button button--md button--danger-soft">Sulje</span>
                     </Dropdown.Trigger>
                     <Dropdown.Popover>
-                      <Dropdown.Menu aria-label="Sulje ehdotus" disabledKeys={isClosed ? ["accepted", "rejected"] : []}>
+                      <Dropdown.Menu
+                        aria-label="Sulje ehdotus"
+                        disabledKeys={isClosed ? ["accepted", "rejected"] : []}
+                      >
                         <Dropdown.Item
                           key="accepted"
                           onPress={() => onClose(proposal.id, "ACCEPTED")}
@@ -199,8 +226,6 @@ export function OpenProposalCard({
               )}
             </div>
 
-
-
             {isMeetingAdmin && (
               <div className="flex flex-row gap-3 pt-2 border-t border-border/70">
                 <Checkbox
@@ -209,7 +234,7 @@ export function OpenProposalCard({
                   onChange={(isSelected) => onToggleSelectedForDecision(proposal.id, isSelected)}
                   isDisabled={isClosed}
                   variant="secondary"
-                  className="relative" // this is needed, because aria-components use absolute positioning, which breaks the layout
+                  className="relative"
                 >
                   <Checkbox.Control>
                     <Checkbox.Indicator />
@@ -220,7 +245,7 @@ export function OpenProposalCard({
             )}
           </div>
         </div>
-      </div >
+      </div>
 
       <Modal.Backdrop isOpen={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
         <Modal.Container>
@@ -231,9 +256,7 @@ export function OpenProposalCard({
 
             <Modal.Body className="p-4">
               <Surface>
-                <div className="text-sm text-foreground/80">
-                  Huomio: muokkaus poistaa kaikki kannattajat.
-                </div>
+                <div className="text-sm text-foreground/80">Huomio: muokkaus poistaa kaikki kannattajat.</div>
 
                 {proposal.baseProposal && (
                   <div className="text-sm font-semibold">
@@ -250,18 +273,16 @@ export function OpenProposalCard({
                     setIsEditModalOpen(false);
                   }}
                 >
-
                   <TextField>
-                    <Label htmlFor={`editProposalForm:${proposal.id}:description`}>
-                      Ehdotuksen sisältö
-                    </Label>
-                    <Input id={`editProposalForm:${proposal.id}:description`}
+                    <Label htmlFor={`editProposalForm:${proposal.id}:description`}>Ehdotuksen sisältö</Label>
+                    <Input
+                      id={`editProposalForm:${proposal.id}:description`}
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       required
                       autoFocus
-                      disabled={saving}>
-                    </Input>
+                      disabled={saving}
+                    />
                   </TextField>
                 </Form>
 
@@ -283,10 +304,9 @@ export function OpenProposalCard({
                 Tallenna
               </Button>
             </Modal.Footer>
-
           </Modal.Dialog>
         </Modal.Container>
       </Modal.Backdrop>
-    </div >
+    </div>
   );
 }

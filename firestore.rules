@@ -1,40 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSuperAdmin() {
-      let settingsDoc = get(/databases/$(database)/documents/settings/settings);
-      return request.auth != null
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/settings/settings)
-        && (settingsDoc.data.adminEmails is list)
-        && (request.auth.token.email in settingsDoc.data.adminEmails);
-    }
-
     match /{document=**} {
       allow read, write: if false;
     }
 
+    match /{path=**}/meetingAdmins/{adminUid} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
+    }
+    match /{path=**}/participants/{participantUid} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
+    }
+  
     match /meetings/{meetingId} {
       function isMeetingAdmin() {
-			  let settingsDoc = get(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
-			  return request.auth != null
-				  && request.auth.token.email != null
-				  && (request.auth.token.email in settingsDoc.data.adminEmails);
+        return request.auth != null
+          && exists(/databases/$(database)/documents/meetings/$(meetingId)/meetingAdmins/$(request.auth.uid));
       }
       function isMeetingPublic() {
-        let settingsDoc = get(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
-        let e = exists(/databases/$(database)/documents/meetings/$(meetingId)/meetingSettings/settings);
-        return !e || settingsDoc.data.isPublic == true;
-      }
-      function isMeetingParticipant() {
-        return request.auth != null
-          && exists(/databases/$(database)/documents/meetings/$(meetingId)/participants/$(request.auth.uid));
+        let p = /databases/$(database)/documents/meetings/$(meetingId);
+        return !exists(p) || get(p).data.isPublic == true;
       }
 
-      allow get: if isMeetingPublic() || isMeetingAdmin() || isMeetingParticipant();
+      allow get: if isMeetingPublic() || isMeetingAdmin();
       allow create: if request.auth != null;
       allow write: if isMeetingAdmin();
-      allow list: if isSuperAdmin();
+      allow list: if false;
+
+      match /meetingAdmins/{adminUid} {
+        allow read: if (request.auth != null && request.auth.uid == resource.data.uid) || isMeetingAdmin();
+        allow write: if isMeetingAdmin();
+      }
+      match /participants/{participantUid} {
+        allow read: if (request.auth != null && request.auth.uid == resource.data.uid) || isMeetingAdmin();
+        allow write: if isMeetingAdmin();
+      }
 
       match /speeches/{speechId} {
         allow create: if false;
@@ -59,16 +59,28 @@ service cloud.firestore {
         allow update, delete: if false;
 
         match /votes/{voteId} {
-          function votesArePublic() {
+          function votingIsOpen() {
             let s = get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
             return exists(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId))
-              ? (s.data.open == false && s.data.votePublicity == "PUBLIC")
+              ? (s.data.open == true)
               : false;
           }
-
-          allow read, list: if isMeetingAdmin() || votesArePublic();
+          allow read: if (request.auth != null && request.auth.uid == resource.data.voterUid) || !votingIsOpen();
+          allow get: if true;
           allow create: if false;
           allow update, delete: if false;
+        }
+
+        match /voters/{voterId} {
+          function votingIsOpen() {
+            let s = get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
+            return exists(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId))
+              ? (s.data.open == true)
+              : false;
+          }
+          allow list: if !votingIsOpen();
+          allow get: if true;
+          allow write: if false;
         }
       }
     }

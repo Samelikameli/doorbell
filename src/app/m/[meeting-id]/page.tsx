@@ -7,12 +7,12 @@ import { useUser } from "@/context/UserContext";
 import { db } from "@/firebase";
 import { collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, updateDoc } from "@firebase/firestore";
 import { Meeting, Proposal, ProposalCloseReason, SpeechCreateRequest, SpeechType, VotingSession } from "@/types";
-import { Input, Checkbox, Form, Select, Tooltip, Modal, Label, Button, ListBox, ListBoxItem, TextField, Surface, Description, Alert } from "@heroui/react";
+import { Input, Checkbox, Form, Select, Tooltip, Modal, Label, Button, ListBox, ListBoxItem, TextField, Surface, Description, Alert, RadioGroup, Radio, FieldError } from "@heroui/react";
 import { functions } from "@/firebase";
 import { httpsCallable } from "firebase/functions";
 import { UpcomingSpeechCard } from "@/components/UpcomingSpeechCard";
 import { CompletedSpeechCard } from "@/components/CompletedSpeechCard";
-import { ACTION_ICON, formatDate, formatDuration, SPEECH_TYPE_ICON } from "@/utils";
+import { ACTION_ICON, checkIfProposalsCanBeClosedFromVotingResults, formatDate, formatDuration, SPEECH_TYPE_ICON } from "@/utils";
 import { OpenProposalCard } from "@/components/OpenProposalCard";
 import { useSpeeches } from "@/hooks/useSpeeches";
 import { useProposals } from "@/hooks/useProposals";
@@ -22,10 +22,15 @@ import { useRouter } from "next/navigation";
 
 import { useVotingSessions } from "@/hooks/useVotingSessions";
 import { ClosedProposalCard } from "@/components/ClosedProposalCard";
+import { OpenVotingSessionCard } from "@/components/OpenVotingSessionCard";
+import { ClosedVotingSessionCard } from "@/components/ClosedVotingSessionCard";
+import { useMeeting } from "@/hooks/useMeeting";
+import { useSpeechTypes } from "@/hooks/useSpeechTypes";
+import { useMeetingAdmin } from "@/hooks/useMeetingAdmin";
 
 export default function MeetingPage() {
 
-    const { user, loading } = useUser();
+    const { user, loading: userLoading } = useUser();
     const router = useRouter();
     const params = useParams();
 
@@ -37,17 +42,17 @@ export default function MeetingPage() {
     const [quickVoteSaving, setQuickVoteSaving] = useState(false);
     const [quickVoteError, setQuickVoteError] = useState<string>("");
 
-
-
     const [selectedTab, setSelectedTab] = useState<"SPEECHES" | "VOTING">("SPEECHES");
 
     const descriptionRef = useRef<HTMLInputElement | null>(null);
     const nameInputRef = useRef<HTMLInputElement | null>(null);
 
-    const [code, setCode] = useState("");
-    const [meeting, setMeeting] = useState<Meeting | null>(null);
+    const meetingCode = params["meeting-id"] as string | undefined;
+    const { meeting, loading: meetingLoading, error: meetingError, exists } = useMeeting(meetingCode);
+    const { speechTypes, defaultSpeechTypeId, getSpeechTypeById } = useSpeechTypes(meeting?.code);
 
-    const [isMeetingAdmin, setIsMeetingAdmin] = useState(false);
+
+    const { isAdmin: isMeetingAdmin, loading: adminLoading } = useMeetingAdmin(meeting?.code, user, userLoading);
 
     const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -60,8 +65,6 @@ export default function MeetingPage() {
 
     const [speechAdminActions, setSpeechAdminActions] = useState<{ meetingCode: string, speechId: string, field: string, newValue: any, oldValue: any }[]>([]);
 
-    const [speechTypesForMeeting, setSpeechTypesForMeeting] = useState<SpeechType[] | null>(null);
-
     const [speechDescriptionInput, setSpeechDescriptionInput] = useState("");
     const [speechTypeInput, setSpeechTypeInput] = useState<string | null>(null);
 
@@ -70,24 +73,24 @@ export default function MeetingPage() {
 
     const { upcomingSpeeches, ongoingSpeeches, completedSpeeches } = useSpeeches(meeting?.code);
 
+    const [createVotingSessionPublicity, setCreateVotingSessionPublicity] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
     const [addBlankOption, setAddBlankOption] = useState(true);
 
     const ownOngoing = ongoingSpeeches.length > 0 && ongoingSpeeches[0].speakerName === userName;
 
     const [selectedProposalIds, setSelectedProposalIds] = useState<Set<string>>(() => new Set());
 
-    const rtdbEnabled = !!user && !loading && userName.trim() !== "" && !!meeting?.code;
+    const rtdbEnabled = !!user && !userLoading && userName.trim() !== "" && !!meeting?.code;
 
     useRtdbPresence(meeting?.code, userName, rtdbEnabled);
     const { online } = useOnlineNowRtdb(meeting?.code, 60_000, rtdbEnabled);
 
     useEffect(() => {
-        console.log("User loading state:", loading, "user:", user, "meeting:", meeting?.requireLogin);
-        if (!loading && user && user.isAnonymous && meeting && meeting.requireLogin) {
+        console.log("User loading state:", userLoading, "user:", user, "meeting:", meeting?.requireLogin);
+        if (!userLoading && user && user.isAnonymous && meeting && meeting.requireLogin) {
             router.push('/login?redirect=/new');
         }
-    }, [user, loading, router, meeting]);
-
+    }, [user, userLoading, router, meeting]);
 
     const toggleSelected = (proposalId: string, selected: boolean) => {
         setSelectedProposalIds((prev) => {
@@ -112,14 +115,14 @@ export default function MeetingPage() {
     }, [openProposals]);
 
     useEffect(() => {
-        if (!code) {
+        if (!meetingCode) {
             return;
         }
-        const saved = localStorage.getItem(`name:${code}`);
+        const saved = localStorage.getItem(`name:${meetingCode}`);
         if (saved) {
             setUserNameInput(saved);
         }
-    }, [code]);
+    }, [meetingCode]);
 
 
     useEffect(() => {
@@ -130,99 +133,8 @@ export default function MeetingPage() {
     }, []);
 
     useEffect(() => {
-        const meetingCode = params['meeting-id'] as string;
-        if (meetingCode) {
-            console.log("Meeting code from params:", meetingCode, "time:", new Date().toISOString());
-            setCode(meetingCode);
-        }
-    }, [params]);
-
-    useEffect(() => {
-        console.log("Loading meeting data for code:", code, "time:", new Date().toISOString());
-        if (!code) return;
-
-        let unsubscribe: (() => void) | undefined;
-
-        const loadMeeting = async () => {
-            console.log("Fetching meeting data for code:", code, "time:", new Date().toISOString());
-            try {
-                const ref = doc(db, "meetings", code);
-                const snap = await getDoc(ref);
-
-                if (!snap.exists()) {
-                    console.warn("Meeting does not exist:", code);
-                    setMeeting(null);
-                    return;
-                }
-
-                const data = snap.data();
-                console.log("Fetched meeting data:", data, "time:", new Date().toISOString());
-                setMeeting({
-                    ...data,
-                    createdAt: data.createdAt.toDate(),
-                } as Meeting);
-
-                console.log("Setting up realtime listener for meeting:", code, "time:", new Date().toISOString());
-                unsubscribe = onSnapshot(
-                    ref,
-                    (liveSnap) => {
-                        if (!liveSnap.exists()) return;
-                        const liveData = liveSnap.data();
-                        setMeeting({
-                            ...liveData,
-                            createdAt: liveData.createdAt.toDate(),
-                        } as Meeting);
-                    },
-                    (err) => console.error("Meeting realtime error:", err)
-                );
-            } catch (err) {
-                console.error("Meeting fetch error:", err);
-                setMeeting(null);
-            }
-        };
-
-        loadMeeting();
-
-        return () => unsubscribe?.();
-    }, [code]);
-
-    useEffect(() => {
-        if (meeting === null) return;
-
-        const loadSpeechTypes = async () => {
-            console.log("Fetching speech types for meeting:", meeting.code);
-            try {
-                const speechTypesRef = collection(db, "meetings", meeting.code, "speechTypes");
-                const speechTypesSnap = await getDocs(speechTypesRef);
-                const types: SpeechType[] = [];
-                speechTypesSnap.forEach(doc => {
-                    const data = doc.data();
-                    types.push({
-                        id: doc.id,
-                        label: data.label,
-                        priority: data.priority,
-                        icon: data.icon,
-                    } as SpeechType);
-                });
-                console.log("Fetched speech types:", types);
-                // sort by priority descending
-                types.sort((a, b) => b.priority - a.priority);
-
-                setSpeechTypesForMeeting(types);
-            } catch (err) {
-                console.error("Error fetching speech types:", err);
-                setSpeechTypesForMeeting(null);
-            }
-        };
-
-        loadSpeechTypes();
-    }, [meeting]);
-
-    useEffect(() => {
-        console.log("Speech types for meeting updated:", speechTypesForMeeting);
-        setSpeechTypeInput(speechTypesForMeeting?.[0]?.id ?? null);
-    }, [speechTypesForMeeting]);
-
+        setSpeechTypeInput(speechTypes?.[0]?.id ?? null);
+    }, [speechTypes]);
 
     useEffect(() => {
         if (!userName) return;
@@ -234,6 +146,7 @@ export default function MeetingPage() {
             });
         }
     }, [userName]);
+
     const focusStartNext = () => {
         // Prefer a stable selector you control
         const el =
@@ -259,28 +172,6 @@ export default function MeetingPage() {
             });
         });
     }, [userName, isMeetingAdmin, selectedTab, ongoingSpeeches.length]);
-
-
-    useEffect(() => {
-        const checkAdminStatus = async () => {
-            if (!loading && user && meeting) {
-                const checkIfMeetingAdmin = httpsCallable(functions, 'checkIfMeetingAdmin');
-                try {
-                    const result = await checkIfMeetingAdmin({ meetingCode: meeting.code }) as any;
-                    console.log("Admin check result:", result.data as any);
-                    if (result.data && result.data.status === "OK" && result.data.isAdmin === true) {
-                        setIsMeetingAdmin(true);
-                    } else {
-                        setIsMeetingAdmin(false);
-                    }
-                } catch (error) {
-                    console.error("Error checking admin status:", error);
-                    setIsMeetingAdmin(false);
-                }
-            }
-        };
-        checkAdminStatus();
-    }, [user, loading, meeting]);
 
     useEffect(() => {
         const activeId = ongoingSpeeches[0]?.id;
@@ -341,13 +232,6 @@ export default function MeetingPage() {
         upcomingSpeeches.length,
     ]);
 
-
-    const getSpeechTypeById = (id: string): SpeechType => {
-        if (!speechTypesForMeeting) return { id: id, label: id, priority: 1000, icon: "" };
-        const type = speechTypesForMeeting.find(t => t.id === id);
-        return type || { id: id, label: id, priority: 1000, icon: "" };
-    }
-
     const handleJoinWithName = (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -355,8 +239,12 @@ export default function MeetingPage() {
         if (!trimmed) return;
 
         setUserName(trimmed);
-        localStorage.setItem(`name:${code}`, trimmed);
+
+        if (meetingCode) {
+            localStorage.setItem(`name:${meetingCode}`, trimmed);
+        }
     };
+
 
     const handleAddSpeech = async (e: React.FormEvent) => {
         try {
@@ -378,8 +266,8 @@ export default function MeetingPage() {
             console.log("Speech added:", result.data);
             // clear inputs
             setSpeechDescriptionInput("");
-            if (speechTypesForMeeting && speechTypesForMeeting.length > 0) {
-                setSpeechTypeInput(speechTypesForMeeting[0].id ?? null);
+            if (speechTypes && speechTypes.length > 0) {
+                setSpeechTypeInput(speechTypes[0].id ?? null);
             }
 
             if (!isMeetingAdmin) {
@@ -414,8 +302,8 @@ export default function MeetingPage() {
         try {
             const speechRef = doc(db, "meetings", meetingCode, "speeches", speechId);
 
-            setSpeechAdminActions(prev => [...prev, { meetingCode: code, speechId: speechId, field: "completed", newValue: true, oldValue: false }]);
-            setSpeechAdminActions(prev => [...prev, { meetingCode: code, speechId: speechId, field: "completedAt", newValue: new Date().toISOString(), oldValue: null }]);
+            setSpeechAdminActions(prev => [...prev, { meetingCode: meetingCode, speechId: speechId, field: "completed", newValue: true, oldValue: false }]);
+            setSpeechAdminActions(prev => [...prev, { meetingCode: meetingCode, speechId: speechId, field: "completedAt", newValue: new Date().toISOString(), oldValue: null }]);
 
             await updateDoc(speechRef, {
                 completed: true,
@@ -433,8 +321,8 @@ export default function MeetingPage() {
         try {
             const speechRef = doc(db, "meetings", meetingCode, "speeches", speechId);
 
-            setSpeechAdminActions(prev => [...prev, { meetingCode: code, speechId: speechId, field: "completed", newValue: true, oldValue: false }]);
-            setSpeechAdminActions(prev => [...prev, { meetingCode: code, speechId: speechId, field: "completedAt", newValue: new Date().toISOString(), oldValue: null }]);
+            setSpeechAdminActions(prev => [...prev, { meetingCode: meetingCode, speechId: speechId, field: "completed", newValue: true, oldValue: false }]);
+            setSpeechAdminActions(prev => [...prev, { meetingCode: meetingCode, speechId: speechId, field: "completedAt", newValue: new Date().toISOString(), oldValue: null }]);
 
             await updateDoc(speechRef, {
                 completed: true,
@@ -542,6 +430,8 @@ export default function MeetingPage() {
             const result = await createVotingSession({
                 meetingCode: meeting.code,
                 proposalIds,
+                addBlankOption,
+                votePublicity: createVotingSessionPublicity,
             });
 
             console.log("Voting session created:", result.data);
@@ -625,70 +515,105 @@ export default function MeetingPage() {
 
     const handleCloseProposalsFromVoteResults = async (session: VotingSession) => {
         if (!meeting) return;
-
-        // calculate winning proposal id from votes
-        const proposalVotesCount: Record<string, number> = {};
-        session.voteOptions.forEach(option => {
-            if (option.type === "PROPOSAL") {
-                proposalVotesCount[option.proposalId] = 0;
+        if (session.type === "FOR-AGAINST-ABSTAIN") {
+            console.log("Checking FOR-AGAINST-ABSTAIN session for closing proposals, session:", session);
+            if (session.proposalIds.length !== 1) {
+                console.warn("FOR-AGAINST-ABSTAIN session has more than one proposal, cannot close:", session);
+                return;
             }
-        });
-        session.votes.forEach(vote => {
-            const option = session.voteOptions.find(o => o.id === vote.voteOptionId);
-            if (option?.type === "PROPOSAL") {
-                proposalVotesCount[option.proposalId] = (proposalVotesCount[option.proposalId] || 0) + 1;
+            const proposalId = session.proposalIds[0];
+
+            const votesFor = session.votes.filter(v => {
+                const option = session.voteOptions.find(o => o.id === v.voteOptionId);
+                return option?.type === "FOR-AGAINST-ABSTAIN" && option.vote === "FOR";
+            }).length;
+            const votesAgainst = session.votes.filter(v => {
+                const option = session.voteOptions.find(o => o.id === v.voteOptionId);
+                return option?.type === "FOR-AGAINST-ABSTAIN" && option.vote === "AGAINST";
+            }).length;
+
+            if (votesFor === votesAgainst) {
+                console.log("No winning option in FOR-AGAINST-ABSTAIN session due to tie, session:", session);
+                return;
             }
-        });
 
-        // find proposal id with most votes
-        let winningProposalId: string | null = null;
-        let maxVotes = -1;
-        for (const proposalId in proposalVotesCount) {
-            if (proposalVotesCount[proposalId] > maxVotes) {
-                maxVotes = proposalVotesCount[proposalId];
-                winningProposalId = proposalId;
-            }
-        }
-
-        // find ties if any
-        const tiedProposalIds = Object.keys(proposalVotesCount).filter(pid => proposalVotesCount[pid] === maxVotes);
-        if (tiedProposalIds.length > 1) {
-            console.log("Voting session resulted in a tie between proposals:", tiedProposalIds);
-            return;
-        }
-
-        if (!winningProposalId) {
-            console.log("No winning proposal found for voting session:", session.votingSessionId);
-            return;
-        }
-
-        // now we have the winning proposal id, we can close it
-        try {
-            const fn = httpsCallable(functions, "closeProposal");
-            await fn({
-                meetingCode: meeting.code,
-                proposalId: winningProposalId,
-                closedAs: "ACCEPTED" as ProposalCloseReason,
-            });
-        } catch (e) {
-            console.error("Error closing winning proposal:", e);
-        }
-        // close losing proposals as well
-        const losingProposalIds = Object.keys(proposalVotesCount).filter(pid => pid !== winningProposalId);
-        for (const proposalId of losingProposalIds) {
+            const closedAs: ProposalCloseReason = votesFor > votesAgainst ? "ACCEPTED" : "REJECTED";
             try {
                 const fn = httpsCallable(functions, "closeProposal");
                 await fn({
                     meetingCode: meeting.code,
                     proposalId,
-                    closedAs: "REJECTED" as ProposalCloseReason,
+                    closedAs,
                 });
             } catch (e) {
-                console.error("Error closing losing proposal:", e);
+                console.error("Error closing proposal based on FOR-AGAINST-ABSTAIN session:", e);
+            }
+        }
+        else if (session.type === "ONE-OF-PROPOSALS") {
+
+            // calculate winning proposal id from votes
+            const proposalVotesCount: Record<string, number> = {};
+            session.voteOptions.forEach(option => {
+                if (option.type === "PROPOSAL") {
+                    proposalVotesCount[option.proposalId] = 0;
+                }
+            });
+            session.votes.forEach(vote => {
+                const option = session.voteOptions.find(o => o.id === vote.voteOptionId);
+                if (option?.type === "PROPOSAL") {
+                    proposalVotesCount[option.proposalId] = (proposalVotesCount[option.proposalId] || 0) + 1;
+                }
+            });
+
+            // find proposal id with most votes
+            let winningProposalId: string | null = null;
+            let maxVotes = -1;
+            for (const proposalId in proposalVotesCount) {
+                if (proposalVotesCount[proposalId] > maxVotes) {
+                    maxVotes = proposalVotesCount[proposalId];
+                    winningProposalId = proposalId;
+                }
+            }
+
+            // find ties if any
+            const tiedProposalIds = Object.keys(proposalVotesCount).filter(pid => proposalVotesCount[pid] === maxVotes);
+            if (tiedProposalIds.length > 1) {
+                console.log("Voting session resulted in a tie between proposals:", tiedProposalIds);
+                return;
+            }
+
+            if (!winningProposalId) {
+                console.log("No winning proposal found for voting session:", session.votingSessionId);
+                return;
+            }
+
+            // now we have the winning proposal id, we can close it
+            try {
+                const fn = httpsCallable(functions, "closeProposal");
+                await fn({
+                    meetingCode: meeting.code,
+                    proposalId: winningProposalId,
+                    closedAs: "ACCEPTED" as ProposalCloseReason,
+                });
+            } catch (e) {
+                console.error("Error closing winning proposal:", e);
+            }
+            // close losing proposals as well
+            const losingProposalIds = Object.keys(proposalVotesCount).filter(pid => pid !== winningProposalId);
+            for (const proposalId of losingProposalIds) {
+                try {
+                    const fn = httpsCallable(functions, "closeProposal");
+                    await fn({
+                        meetingCode: meeting.code,
+                        proposalId,
+                        closedAs: "REJECTED" as ProposalCloseReason,
+                    });
+                } catch (e) {
+                    console.error("Error closing losing proposal:", e);
+                }
             }
         }
     };
-
     const loginScreen = (
         <div className="flex justify-center items-center flex-col w-full text-foreground bg-background h-full gap-4">
             <Form onSubmit={handleJoinWithName} validationBehavior="native"
@@ -762,157 +687,33 @@ export default function MeetingPage() {
 
             <div className="flex-1 min-h-0 overflow-y-auto p-3">
                 <div>
-                    <h4 className="text-lg font-semibold mb-2">Avoimet</h4>
+                    <h4 className="text-lg font-semibold mb-2">Käynnissä olevat äänestykset</h4>
+                    {openVotingSessions.map((session) => (
+                        <OpenVotingSessionCard
+                            key={session.votingSessionId}
+                            session={session}
+                            isMeetingAdmin={isMeetingAdmin}
+                            userUid={user?.uid}
+                            onCastVote={handleCastVote}
+                            onClose={handleCloseVotingSession}
+                        />
+                    ))}
 
-                    {openVotingSessions.map((session) => {
-                        const voterKey = user?.uid ?? "";
-                        const myVote = session.votes.find((v) => v.voterUid === voterKey);
-
-                        const hasVoted = !!myVote;
-
-                        return (
-                            <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="flex flex-col">
-                                        {session.type === "FOR-AGAINST-ABSTAIN" &&
-                                            <p>
-                                                {session.label}
-                                            </p>
-                                        }
-                                        <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}</p>
-                                    </div>
-                                    {isMeetingAdmin && (
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onPress={() => handleCloseVotingSession(session.votingSessionId)}
-                                        >
-                                            Sulje äänestys
-                                        </Button>
-                                    )}
-                                </div>
-
-                                {hasVoted && <p className="text-sm mt-2">Olet jo äänestänyt.</p>}
-
-                                <ul className="mt-2 space-y-2">
-                                    {session.voteOptions.map((option) => {
-                                        const label =
-                                            option.type === "PROPOSAL" ? option.proposal.description : option.label ?? option.vote;
-
-                                        const selected = myVote?.voteOptionId === option.id;
-
-                                        return (
-                                            <li key={option.id} className="flex items-center justify-between gap-3">
-                                                <span className={selected ? "font-semibold" : ""}>{label}</span>
-                                                <Button
-                                                    size="sm"
-                                                    variant={selected ? "primary" : "outline"}
-                                                    isDisabled={hasVoted}
-                                                    onPress={() => handleCastVote(session.votingSessionId, option.id)}
-                                                >
-                                                    {selected ? "Valittu" : "Äänestä"}
-                                                </Button>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-
-                                <div className="mt-3 text-sm opacity-70">Ääniä: {session.votes.length}</div>
-                            </div>
-                        );
-                    })}
-
-                    {openVotingSessions.length === 0 && <p className="text-sm opacity-70">Ei avoimia äänestyksiä.</p>}
+                    {openVotingSessions.length === 0 && <p className="text-sm opacity-70">Ei käynnissä olevia äänestyksiä.</p>}
                 </div>
 
                 <div>
-                    <h4 className="text-lg font-semibold mb-2">Suljetut</h4>
+                    <h4 className="text-lg font-semibold mb-2">Lopetetut äänestykset</h4>
 
-                    {completedVotingSessions.map((session) => {
-                        // results
-                        const counts = new Map<string, number>();
-                        for (const v of session.votes) counts.set(v.voteOptionId, (counts.get(v.voteOptionId) ?? 0) + 1);
-
-                        const optionsWithCounts = session.voteOptions
-                            .map((o) => ({
-                                option: o,
-                                count: counts.get(o.id) ?? 0,
-                            }))
-                            .sort((a, b) => b.count - a.count);
-
-                        const votesByOption = new Map<string, { voterUid: string, voterName: string }[]>();
-                        for (const v of session.votes) {
-                            const arr = votesByOption.get(v.voteOptionId) ?? [];
-                            arr.push({ voterUid: v.voterUid, voterName: v.voterName });
-                            votesByOption.set(v.voteOptionId, arr);
-                        }
-
-                        // check if all the proposals in this voting session are open
-                        const allProposalsOpen = session.voteOptions
-                            .filter((o) => o.type === "PROPOSAL")
-                            .map((o) => o.proposalId)
-                            .every((pid) => openProposals.some((p) => p.id === pid));
-
-                        return (
-                            <div key={session.votingSessionId} className="border border-border rounded p-3 mb-3">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="flex flex-col">
-                                        {session.type === "FOR-AGAINST-ABSTAIN" &&
-                                            <p>
-                                                {session.label}
-                                            </p>
-                                        }
-                                        <p className="text-sm text-muted">Aloitettu {formatDate(session.createdAt)}{session.closedAt && (<span>, suljettu {formatDate(session.closedAt)}</span>)}</p>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <Button
-                                            onPress={() => handleCloseProposalsFromVoteResults(session)}
-                                            variant="secondary"
-                                            isDisabled={!allProposalsOpen}
-                                        >
-                                            Sulje ehdotukset: voittanut hyväksyttynä, hävinneet hylättynä
-                                        </Button>
-                                        <div className="text-sm opacity-70">Ääniä: {session.votes.length}</div>
-                                    </div>
-                                </div>
-
-                                <div className="mt-3">
-                                    <div className="text-sm font-semibold mb-2">Tulokset</div>
-                                    <ul className="space-y-2">
-                                        {optionsWithCounts.map(({ option, count }) => {
-                                            const label =
-                                                option.type === "PROPOSAL" ? option.proposal.description : option.label ?? option.vote;
-
-                                            const voters = votesByOption.get(option.id) ?? [];
-
-                                            return (
-                                                <li key={option.id} className="border border-border rounded p-2">
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <span className="font-medium">{label}</span>
-                                                        <span className="text-sm opacity-70">{count}</span>
-                                                    </div>
-
-                                                    {/* Votes are public after closed */}
-                                                    {voters.length > 0 && (
-                                                        <div className="mt-2 text-sm opacity-80">
-                                                            <div className="opacity-70">Äänestäjät:</div>
-                                                            <div className="flex flex-wrap gap-2 mt-1">
-                                                                {voters.map((x, idx) => (
-                                                                    <span key={`${option.id}:${x.voterName}:${idx}`} className="px-2 py-0.5 border border-border rounded">
-                                                                        {x.voterName}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                </div>
-                            </div>
-                        );
-                    })}
+                    {completedVotingSessions.map((session) => (
+                        <ClosedVotingSessionCard
+                            key={session.votingSessionId}
+                            session={session}
+                            isMeetingAdmin={isMeetingAdmin}
+                            closeProposalsFromVoteResults={handleCloseProposalsFromVoteResults}
+                            proposalsCanBeClosedFromVotingResults={checkIfProposalsCanBeClosedFromVotingResults(session, openProposals)}
+                        />
+                    ))}
 
                     {completedVotingSessions.length === 0 && <p className="text-sm opacity-70">Ei suljettuja äänestyksiä.</p>}
                 </div>
@@ -974,7 +775,6 @@ export default function MeetingPage() {
                     )}
                 </div>
             )}
-
         </div>
     );
 
@@ -1159,7 +959,7 @@ export default function MeetingPage() {
                         </Select.Trigger>
                         <Select.Popover>
                             <ListBox>
-                                {speechTypesForMeeting && speechTypesForMeeting.map((type) => {
+                                {speechTypes && speechTypes.map((type) => {
                                     return (
                                         <ListBox.Item key={type.id} id={type.id}>
                                             <div className="flex flex-row justify-start items-center">
@@ -1325,6 +1125,30 @@ export default function MeetingPage() {
                                                     </div>
                                                 )}
                                             </div>
+                                            <RadioGroup variant="secondary" value={createVotingSessionPublicity} onChange={(value) => setCreateVotingSessionPublicity(value as 'PUBLIC' | 'PRIVATE')} className="mt-4">
+                                                <Label />
+                                                <Description />
+                                                <Radio value={"PUBLIC"}>
+                                                    <Radio.Control>
+                                                        <Radio.Indicator />
+                                                    </Radio.Control>
+                                                    <Radio.Content>
+                                                        <Label >Avoin äänestys</Label>
+                                                        <Description />
+                                                    </Radio.Content>
+                                                </Radio>
+                                                <Radio value={"PRIVATE"}>
+                                                    <Radio.Control>
+                                                        <Radio.Indicator />
+                                                    </Radio.Control>
+                                                    <Radio.Content>
+                                                        <Label >Suljettu äänestys</Label>
+                                                        <Description />
+                                                    </Radio.Content>
+                                                </Radio>
+                                                <FieldError />
+                                            </RadioGroup>
+
                                             {openVotingSessions.length > 0 && (
                                                 openVotingSessionsWarning
                                             )}

@@ -12,10 +12,12 @@ export interface Meeting {
     createdAt: Date;
     createdBy: string;
     requireLogin: boolean;
+    isPublic: boolean;
+    defaultSpeechType: string;
+    requireAuth: boolean;
 }
 
 export interface Speech {
-    meetingCode: string;
     speakerName: string;
     description: string;
     createdAt: Date;
@@ -33,7 +35,6 @@ export interface Speech {
 export type ProposalCloseReason = "ACCEPTED" | "REJECTED";
 
 export interface Proposal {
-    meetingCode: string;
     proposerUid: string;
     proposerName: string;
     description: string;
@@ -59,28 +60,37 @@ export type HydratedVoteOption =
 export interface VotingSession {
     label: string;
     votingSessionId: string;
-    meetingCode: string;
-    voteOptions: HydratedVoteOption[]; // hydrated in UI
+    voteOptions: HydratedVoteOption[];
     votes: Vote[];
+    voters?: Voter[]; // only for closed sessions where we fetch the list of voters together with the session
     type: "ONE-OF-PROPOSALS" | "FOR-AGAINST-ABSTAIN";
     votePublicity: "PUBLIC" | "PRIVATE";
     open: boolean;
     createdAt: Date;
     closedAt?: Date;
-    closedBy?: string;
+    closedBy?: string; // uid
+    proposalIds: string[]; // for convenience, denormalized from voteOptions
+
+    // UI-only state derived from /voters/{uid} and (PUBLIC only) /votes query
+    hasVoted?: boolean;
+    myVoteOptionId?: string;
 }
 
 export interface Vote {
     votingSessionId: string;
+    voterUid?: string;
+    voterName?: string;
+    voteOptionId: string;
+}
+export interface Voter {
+    votingSessionId: string;
     voterUid: string;
     voterName: string;
-    voteOptionId: string;
-    createdAt: Date;
 }
 
-export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy"> ;
+export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy">;
 
-export type SpeechCreateRequest = Omit<Speech, "id" | "createdAt" | "started" | "startedAt" | "completed" | "completedAt" | "skipped" | "priority" | "ordinal">;
+export type SpeechCreateRequest = Omit<Speech, "id" | "createdAt" | "started" | "startedAt" | "completed" | "completedAt" | "skipped" | "priority" | "ordinal"> & { meetingCode: string };
 
 export interface SpeechAction {
     label: string;

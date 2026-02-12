@@ -75,6 +75,7 @@ export default function NewPage() {
                 name,
                 requireLogin,
                 startsAt: startTime ? startTime.toDate() : null,
+                isPublic: true
             } as MeetingCreateRequest);
             console.log("Meeting created:", result.data);
 

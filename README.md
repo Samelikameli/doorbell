@@ -28,10 +28,7 @@ Esitykset (Proposals)
  - Käyttäjät voivat äänestää esityksistä kokoushuoneessa
  - Äänestystulokset näytetään reaaliajassa
 
-
-
-TODO
-Äänestykset näkyviin
-Omaa ehdotusta ei voi kannattaa
-Omia ehdotuksia voi muokata
-Ehdotuksen voi sulkea päätöksenä tai hylättynä
+TODO:
+- parempi käyttäjähallinta: ennalta määrätyt kutsulistat kokouksiin
+- äänioikeuksien hallinta
+- esityslistan syöttö kokoukselle

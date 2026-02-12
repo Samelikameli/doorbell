@@ -22,8 +22,4 @@ export const storage = getStorage(app);
 export const functions = getFunctions(app, "europe-north1");
 export const rtdb = getDatabase(app);
 
-if (typeof window !== "undefined") {
-  console.log("[firebase] RTDB url", (rtdb as any)._repo?.repoInfo_?.databaseURL ?? "unknown");
-}
-
 export default app;
