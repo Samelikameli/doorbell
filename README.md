@@ -33,3 +33,9 @@ TODO:
 - parempi käyttäjähallinta: ennalta määrätyt kutsulistat kokouksiin
 - äänioikeuksien hallinta
 - esityslistan syöttö kokoukselle
+
+
+Tech:
+- Front: Next.js 16
+- UI: HeroUI v3
+- Backend: Firebase (Firestore, Authentication, Cloud Functions, Realtime Database for presence)
