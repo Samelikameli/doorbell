@@ -39,8 +39,7 @@ function meetingFromDoc(id: string, data: DocumentData): Meeting {
   const createdAt = toDateMaybe(data.createdAt) ?? new Date(0);
   const code: string = String(data.code ?? id);
 
-  const requireLogin = Boolean(data.requireLogin ?? data.requireAuth ?? false);
-  const requireAuth = Boolean(data.requireAuth ?? data.requireLogin ?? false);
+  const requireLogin = Boolean(data.requireLogin ?? false);
 
   return {
     code,
@@ -51,7 +50,6 @@ function meetingFromDoc(id: string, data: DocumentData): Meeting {
     requireLogin,
     isPublic: Boolean(data.isPublic ?? false),
     defaultSpeechType: String(data.defaultSpeechType ?? ""),
-    requireAuth,
   };
 }
 

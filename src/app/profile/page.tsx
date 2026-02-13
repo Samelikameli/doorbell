@@ -12,12 +12,12 @@ export default function Profile() {
   const router = useRouter();
 
   const { meetings, loading, error } = useAdminMeetings(user, userLoading);
-
+/*
   useEffect(() => {
-    if (!userLoading && user && user.isAnonymous) {
+    if (!userLoading && user) {
       router.push("/login?redirect=/profile");
     }
-  }, [user, userLoading, router]);
+  }, [user, userLoading, router]);*/
 
   return (
     <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
@@ -82,14 +82,23 @@ export default function Profile() {
                         )}
                       </span>
                     </div>
+                    <div className="flex flex-row gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onPress={() => router.push(`/ms/${m.code}`)}
+                      >
+                        Hallinnoi
+                      </Button>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onPress={() => router.push(`/m/${m.code}`)}
-                    >
-                      Liity kokoukseen
-                    </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onPress={() => router.push(`/m/${m.code}`)}
+                      >
+                        Liity kokoukseen
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>

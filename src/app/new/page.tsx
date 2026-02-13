@@ -23,7 +23,7 @@ export default function NewPage() {
     const [existing, setExisting] = useState(false);
     const [name, setName] = useState("");
     const [requireLogin, setRequireLogin] = useState(false);
-    const [startTime, setStartTime] = useState<ZonedDateTime | null>(now(getLocalTimeZone()));
+    const [startTime, setStartTime] = useState<ZonedDateTime>(now(getLocalTimeZone()));
 
     useEffect(() => {
         console.log("User loading state:", loading, "user:", user);
@@ -74,7 +74,7 @@ export default function NewPage() {
                 code,
                 name,
                 requireLogin,
-                startsAt: startTime ? startTime.toDate() : null,
+                startsAt: startTime.toDate().toISOString(),
                 isPublic: true
             } as MeetingCreateRequest);
             console.log("Meeting created:", result.data);
@@ -125,7 +125,12 @@ export default function NewPage() {
                             hourCycle={24}
                             value={startTime}
                             defaultValue={now(getLocalTimeZone())}
-                            onChange={(value) => setStartTime(value)}>
+                            onChange={(value) => {
+                                if(value) {
+                                    setStartTime(value);
+                                }
+                            }
+                            }>
                             <Label>Kokous alkaa</Label>
                             <DateInputGroup>
                                 <DateInputGroup.Input>

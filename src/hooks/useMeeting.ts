@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/firebase";
 import type { Meeting } from "@/types";
 
@@ -15,11 +15,11 @@ type UseMeetingResult = {
 
 function mapMeeting(docSnap: any): Meeting {
   const data = docSnap.data({ serverTimestamps: "estimate" });
-
   return {
     ...data,
     code: docSnap.id, // ensure code is present even if not stored in doc
-    createdAt: data.createdAt?.toDate?.() ?? new Date(0),
+    createdAt: (data.createdAt as Timestamp)?.toDate?.() ?? new Date(0),
+    startsAt: (data.startsAt as Timestamp)?.toDate?.() ?? null,
   } as Meeting;
 }
 

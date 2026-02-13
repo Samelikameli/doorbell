@@ -14,7 +14,6 @@ export interface Meeting {
     requireLogin: boolean;
     isPublic: boolean;
     defaultSpeechType: string;
-    requireAuth: boolean;
 }
 
 export interface Speech {
@@ -89,7 +88,7 @@ export interface Voter {
     voterName: string;
 }
 
-export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy">;
+export type MeetingCreateRequest = Omit<Meeting, "createdAt" | "createdBy" | "startsAt"> & { startsAt: string };
 
 export type SpeechCreateRequest = Omit<Speech, "id" | "createdAt" | "started" | "startedAt" | "completed" | "completedAt" | "skipped" | "priority" | "ordinal"> & { meetingCode: string };
 

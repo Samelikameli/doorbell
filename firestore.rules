@@ -11,6 +11,10 @@ service cloud.firestore {
     match /{path=**}/participants/{participantUid} {
       allow read: if request.auth != null && request.auth.uid == resource.data.uid;
     }
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if false;
+    }
   
     match /meetings/{meetingId} {
       function isMeetingAdmin() {
@@ -32,8 +36,10 @@ service cloud.firestore {
         allow write: if isMeetingAdmin();
       }
       match /participants/{participantUid} {
-        allow read: if (request.auth != null && request.auth.uid == resource.data.uid) || isMeetingAdmin();
-        allow write: if isMeetingAdmin();
+        allow get: if (request.auth != null && request.auth.uid == resource.data.uid) || isMeetingAdmin();
+        allow list: if isMeetingAdmin();
+        allow update: if (request.auth != null && request.auth.uid == resource.data.uid) || isMeetingAdmin();
+        allow create: if false;
       }
 
       match /speeches/{speechId} {

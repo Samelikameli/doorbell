@@ -115,15 +115,29 @@ export default function MeetingPage() {
     }, [openProposals]);
 
     useEffect(() => {
-        if (!meetingCode) {
-            return;
-        }
-        const saved = localStorage.getItem(`name:${meetingCode}`);
-        if (saved) {
-            setUserNameInput(saved);
-        }
-    }, [meetingCode]);
+        if (!meetingCode) return;
+        if (userLoading || !user) return;
 
+        const ref = doc(db, "meetings", meetingCode, "participants", user.uid);
+
+        const unsub = onSnapshot(
+            ref,
+            (snap) => {
+                if (!snap.exists()) return;
+                const name = String((snap.data() as any)?.name ?? "").trim();
+                if (!name) return;
+
+                // Prefill input if user has not joined yet
+                setUserNameInput((prev) => (prev.trim() ? prev : name));
+
+                // Optional: auto-join if you want
+                // setUserName((prev) => (prev ? prev : name));
+            },
+            (e) => console.error("participants/{uid} read failed:", e)
+        );
+
+        return () => unsub();
+    }, [meetingCode, user, userLoading]);
 
     useEffect(() => {
         // select the name input field on load
@@ -232,18 +246,59 @@ export default function MeetingPage() {
         upcomingSpeeches.length,
     ]);
 
-    const handleJoinWithName = (e: React.FormEvent) => {
+    const handleJoinWithName = async (e: React.FormEvent) => {
         e.preventDefault();
 
         const trimmed = userNameInput.trim();
         if (!trimmed) return;
+        if (!meetingCode) return;
+        if (userLoading || !user) return;
 
-        setUserName(trimmed);
+        try {
+            const participantRef = doc(db, "meetings", meetingCode, "participants", user.uid);
+            const snap = await getDoc(participantRef);
 
-        if (meetingCode) {
-            localStorage.setItem(`name:${meetingCode}`, trimmed);
+            if (!snap.exists()) {
+                await registerWithName(trimmed);
+                return; // registerWithName already sets userName on success
+            }
+
+            const existingName = String((snap.data() as any)?.name ?? "").trim();
+            if (existingName !== trimmed) {
+                await updateMyParticipantName(trimmed);
+            }
+
+            // Join meeting UI
+            setUserName(trimmed);
+        } catch (err) {
+            console.error("Failed to join with name:", err);
         }
     };
+
+
+    const registerWithName = async (name: string) => {
+
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        if (!meetingCode) return;
+        if (userLoading || !user) return;
+
+        try {
+            const fn = httpsCallable(functions, "registerToMeeting");
+            await fn({ meetingCode, name: trimmed });
+
+            // Only set local UI state after server registration succeeded
+            setUserName(trimmed);
+        } catch (err) {
+            console.error("Registration failed:", err);
+        }
+    };
+
+    async function updateMyParticipantName(nextName: string) {
+        if (!meetingCode || !user) return;
+        const ref = doc(db, "meetings", meetingCode, "participants", user.uid);
+        await updateDoc(ref, { name: nextName.trim(), updatedAt: serverTimestamp() });
+    }
 
 
     const handleAddSpeech = async (e: React.FormEvent) => {

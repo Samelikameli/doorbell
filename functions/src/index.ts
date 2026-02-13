@@ -1,7 +1,7 @@
 //import * as logger from "firebase-functions/logger";
 import { initializeApp } from "firebase-admin/app";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 
 initializeApp();
 
@@ -12,20 +12,6 @@ const isUserAnonymous = (auth: DecodedIdToken): boolean => {
   return !auth.email;
 };
 
-const isMeetingParticipant = async (db: FirebaseFirestore.Firestore, meeting: Meeting, authToken?: DecodedIdToken): Promise<boolean> => {
-  const requireLogin = meeting.requireLogin ?? false;
-  if (!requireLogin) {
-    return !!authToken;
-  }
-  else {
-    if (!authToken) {
-      return false;
-    }
-    else {
-      return !isUserAnonymous(authToken);
-    }
-  }
-};
 
 const isMeetingAdmin = async (db: FirebaseFirestore.Firestore, meeting: Meeting, authToken?: DecodedIdToken): Promise<boolean> => {
   if (!authToken || isUserAnonymous(authToken) || !authToken.uid) {
@@ -35,6 +21,14 @@ const isMeetingAdmin = async (db: FirebaseFirestore.Firestore, meeting: Meeting,
   const adminDoc = await db.collection("meetings").doc(meeting.code).collection("meetingAdmins").doc(authToken.uid).get();
 
   return adminDoc.exists;
+}
+
+const isMeetingParticipant = async (db: FirebaseFirestore.Firestore, meeting: Meeting, authToken?: DecodedIdToken): Promise<boolean> => {
+  if (!authToken) {
+    return false;
+  }
+  const participantDoc = await db.collection("meetings").doc(meeting.code).collection("participants").doc(authToken.uid).get();
+  return participantDoc.exists;
 }
 
 export const createMeeting = onCall(
@@ -58,31 +52,29 @@ export const createMeeting = onCall(
       createdAt: FieldValue.serverTimestamp(),
       createdBy: req.auth.uid,
       requireLogin: data.requireLogin,
-      startsAt: data.startsAt,
+      startsAt: Timestamp.fromDate(new Date(data.startsAt)),
       isPublic: data.isPublic,
-      requireAuth: false,
       defaultSpeechType: "DEFAULT",
-    } as Omit<Meeting, "createdAt">);
+    } as Omit<Meeting, "createdAt" | "startsAt"> & { startsAt: Timestamp });
 
     await db.collection("meetings").doc(data.code).collection("meetingAdmins").doc(req.auth.uid).set({ uid: req.auth.uid });
 
-    await db.collection("meetings").doc(data.code).collection("speechTypes").doc("DEFAULT").set({
-      label: "puheenvuoro",
-      priority: 1000,
-      icon: "DEFAULT"
-    } as SpeechType);
-
-    await db.collection("meetings").doc(data.code).collection("speechTypes").doc("COMMENT").set({
-      label: "repliikki",
-      priority: 500,
-      icon: "COMMENT"
-    } as SpeechType);
-
-    await db.collection("meetings").doc(data.code).collection("speechTypes").doc("TECHNICAL").set({
-      label: "tekninen",
-      priority: 10,
-      icon: "TECHNICAL"
-    } as SpeechType);
+    // read from /settings/availableSpeechTypes and create those for the meeting
+    const availableSpeechTypesSnap = await db.collection("settings").doc("availableSpeechTypes").get();
+    if (availableSpeechTypesSnap.exists) {
+      const availableSpeechTypes = availableSpeechTypesSnap.data()?.speechTypes as (SpeechType & { enabledByDefault: boolean })[] | undefined;
+      if (Array.isArray(availableSpeechTypes)) {
+        for (const st of availableSpeechTypes) {
+          if (st.enabledByDefault) {
+            await db.collection("meetings").doc(data.code).collection("speechTypes").doc(st.id).set({
+              label: st.label,
+              priority: st.priority,
+              icon: st.icon,
+            } as SpeechType);
+          }
+        }
+      }
+    }
 
     return { status: "OK" };
   }
@@ -96,7 +88,6 @@ export const createSpeech = onCall(
     if (!req.auth?.uid) {
       throw new HttpsError("unauthenticated", "Authentication required.");
     }
-
 
     const db = getFirestore();
     const data = req.data as SpeechCreateRequest;
@@ -349,6 +340,10 @@ export const castVote = onCall({ region: "europe-north1" }, async (req) => {
     throw new HttpsError("unauthenticated", "Authentication required.");
   }
 
+  if (!await isMeetingParticipant(db, { code: data.meetingCode } as Meeting, req.auth?.token)) {
+    throw new HttpsError("permission-denied", "You are not a participant of this meeting.");
+  }
+
   const voterUid = req.auth.uid;
   const voterName = (data.voterName ?? "").trim();
 
@@ -434,7 +429,7 @@ export const closeProposal = onCall(
     if (!meetingDoc.exists) {
       return { status: "ERROR", message: "Meeting not found" };
     }
-    // has to be admin
+
     if (!await isMeetingAdmin(db, meetingDoc.data() as Meeting, req.auth?.token)) {
       throw new HttpsError("permission-denied", "Only meeting admins can close proposals.");
     }
@@ -465,7 +460,6 @@ export const closeProposal = onCall(
     return { status: "OK" };
   }
 );
-
 
 export const closeVotingSession = onCall(
   { region: "europe-north1" },
@@ -545,6 +539,10 @@ export const setProposalSupport = onCall(
 
     if (!meetingCode || !proposalId) {
       throw new HttpsError("invalid-argument", "Missing meetingCode or proposalId.");
+    }
+
+    if (!await isMeetingParticipant(db, { code: meetingCode } as Meeting, req.auth?.token)) {
+      throw new HttpsError("permission-denied", "You are not a participant of this meeting.");
     }
 
     const proposalRef = db
@@ -690,6 +688,65 @@ export const editProposal = onCall(
         editedBy: uid,
         editedByName: editorName || null,
       });
+    });
+
+    return { status: "OK" };
+  }
+);
+
+export const registerToMeeting = onCall(
+  { region: "europe-north1" },
+  async (req) => {
+    if (!req.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const uid = req.auth.uid;
+    const { meetingCode, name } = req.data as { meetingCode?: string; name?: string };
+
+    if (!meetingCode || typeof meetingCode !== "string") {
+      throw new HttpsError("invalid-argument", "meetingCode is required.");
+    }
+
+    const trimmedName = String(name ?? "").trim();
+    if (!trimmedName) {
+      throw new HttpsError("invalid-argument", "name is required.");
+    }
+
+    const db = getFirestore();
+
+    // Ensure meeting exists (optional but recommended)
+    const meetingRef = db.collection("meetings").doc(meetingCode);
+    const meetingSnap = await meetingRef.get();
+    if (!meetingSnap.exists) {
+      throw new HttpsError("not-found", "Meeting not found.");
+    }
+    const meetingData = meetingSnap.data() as Meeting;
+    if (meetingData.requireLogin && isUserAnonymous(req.auth.token)) {
+      throw new HttpsError("permission-denied", "This meeting requires login. Anonymous users cannot register.");
+    }
+    // for now, only public meetings can be joined
+    if (!meetingData.isPublic) {
+      throw new HttpsError("permission-denied", "This meeting is not public. You cannot register.");
+    }
+
+    const participantRef = meetingRef.collection("participants").doc(uid);
+
+    // Create only if missing; do not overwrite existing participant data.
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(participantRef);
+      if (!snap.exists) {
+        tx.create(participantRef, {
+          uid,
+          name: trimmedName,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Optional: update the name on re-register
+        tx.update(participantRef, {
+          name: trimmedName,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     return { status: "OK" };
