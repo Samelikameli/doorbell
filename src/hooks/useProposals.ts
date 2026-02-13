@@ -25,7 +25,7 @@ function mapProposal(docSnap: any): Proposal {
   } as Proposal;
 }
 
-export function useProposals(meetingCode: string | null | undefined): UseProposalsResult {
+export function useProposals(meetingCode: string | null | undefined, enabled: boolean): UseProposalsResult {
   const [openProposals, setOpenProposals] = useState<Proposal[]>([]);
   const [acceptedProposals, setAcceptedProposals] = useState<Proposal[]>([]);
   const [rejectedProposals, setRejectedProposals] = useState<Proposal[]>([]);
@@ -33,7 +33,7 @@ export function useProposals(meetingCode: string | null | undefined): UseProposa
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!meetingCode) {
+    if (!meetingCode || !enabled) {
       setOpenProposals([]);
       setLoading(false);
       setError(null);
@@ -96,7 +96,7 @@ export function useProposals(meetingCode: string | null | undefined): UseProposa
       unsubscribeClosed();
     };
 
-  }, [meetingCode]);
+  }, [meetingCode, enabled]);
 
   return { openProposals, acceptedProposals, rejectedProposals, loading, error };
 }

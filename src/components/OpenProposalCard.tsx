@@ -176,7 +176,6 @@ export function OpenProposalCard({
                     {isSupportedByMe ? "Peru kannatus" : "Kannata"}
                   </Button>
                 )}
-
                 {isMeetingAdmin && isProposalByMe && (
                   <Button
                     size="sm"

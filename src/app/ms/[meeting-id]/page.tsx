@@ -270,7 +270,7 @@ export default function MeetingSettingsPage() {
         <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
             <div className="flex flex-row px-4 py-3 border-b border-border shrink-0 gap-4 items-center justify-between">
                 <div>Oma profiili &gt; {meetingCode} &gt; asetukset</div>
-                <Button size="sm" variant="outline" onPress={() => router.push(`/meetings/${meetingCode}`)}>
+                <Button size="sm" variant="outline" onPress={() => router.push(`/profile`)}>
                     Takaisin
                 </Button>
             </div>

@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import { formatDate } from "@/utils";
-import { Button, Chip, Tooltip } from "@heroui/react";
+import { Button, Chip, Dropdown, ListBox, Select, Tooltip } from "@heroui/react";
 import type { VotingSession, HydratedVoteOption } from "@/types";
 
 export function OpenVotingSessionCard({
@@ -25,6 +25,8 @@ export function OpenVotingSessionCard({
 
   const isPublic = session.votePublicity === "PUBLIC";
   const hasVoted = !!session.hasVoted;
+
+  const [selectedVoteOption, setSelectedVoteOption] = React.useState<number | null>(null);
 
   const selectedOption = isPublic
     ? session.voteOptions.find((o) => o.id === session.myVoteOptionId)
@@ -82,15 +84,21 @@ export function OpenVotingSessionCard({
 
           {isMeetingAdmin && (
             <div className="flex-shrink-0">
-              <Button size="sm" variant="outline" onPress={() => onClose(session.votingSessionId)}>
-                Sulje äänestys
-              </Button>
+
+              <Dropdown>
+                <Button variant="outline" className="font-semibold">Sulje äänestys</Button>
+                <Dropdown.Popover className="w-48 p-2">
+                  <Button variant="danger" className="w-full" onPress={() => onClose(session.votingSessionId)}>
+                    Vahvista sulkeminen
+                  </Button>
+                </Dropdown.Popover>
+              </Dropdown>
             </div>
           )}
         </div>
 
         <ul className="mt-3 space-y-2">
-          {session.voteOptions.map((opt) => {
+          {session.voteOptions.map((opt, index) => {
             const label = optionLabel(opt);
             const selected = isPublic && session.myVoteOptionId === opt.id;
 
@@ -99,22 +107,30 @@ export function OpenVotingSessionCard({
                 <span className={selected ? "font-semibold break-words" : "break-words"}>
                   {label}
                 </span>
-
-                <Button
-                  size="sm"
-                  variant={selected ? "primary" : "outline"}
-                  isDisabled={!userUid || hasVoted}
-                  onPress={() => onCastVote(session.votingSessionId, opt.id)}
-                >
-                  {selected ? "Valittu" : hasVoted ? "Äänestetty" : "Äänestä"}
-                </Button>
+                <Dropdown isOpen={selectedVoteOption === index} onOpenChange={(open) => setSelectedVoteOption(open ? index : null)}>
+                  <Button isDisabled={!userUid || hasVoted} variant="outline" className="font-semibold">Äänestä</Button>
+                  <Dropdown.Popover placement="left" className="p-2 !w-fit !min-w-0">
+                    <div className="inline-flex">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onPress={() => {
+                          onCastVote(session.votingSessionId, opt.id);
+                          setSelectedVoteOption(null);
+                        }}
+                      >
+                        {selected ? "Valittu" : hasVoted ? "Äänestetty" : "Äänestä"}
+                      </Button>
+                    </div>
+                  </Dropdown.Popover>
+                </Dropdown>
               </li>
             );
           })}
         </ul>
 
         <div className="mt-3 text-sm text-foreground/70">
-          {isPublic ? <>Ääniä: {session.votes.length}</> : <>Ääniä: ei näytetä yksityisessä äänestyksessä</>}
+          {isPublic ? <>Ääniä: {session.voters?.length}</> : <>Ääniä: ei näytetä yksityisessä äänestyksessä</>}
         </div>
       </div>
     </div>

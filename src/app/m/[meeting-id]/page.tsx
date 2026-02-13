@@ -27,6 +27,7 @@ import { ClosedVotingSessionCard } from "@/components/ClosedVotingSessionCard";
 import { useMeeting } from "@/hooks/useMeeting";
 import { useSpeechTypes } from "@/hooks/useSpeechTypes";
 import { useMeetingAdmin } from "@/hooks/useMeetingAdmin";
+import { useMeetingJoinStatus } from "@/hooks/useMeetingJoinStatus";
 
 export default function MeetingPage() {
 
@@ -52,16 +53,12 @@ export default function MeetingPage() {
     const { speechTypes, defaultSpeechTypeId, getSpeechTypeById } = useSpeechTypes(meeting?.code);
 
 
-    const { isAdmin: isMeetingAdmin, loading: adminLoading } = useMeetingAdmin(meeting?.code, user, userLoading);
 
     const [nowMs, setNowMs] = useState(() => Date.now());
 
-    const { openProposals, acceptedProposals, rejectedProposals } = useProposals(meeting?.code);
-
-    const { openVotingSessions, completedVotingSessions, loading: votingSessionsLoading, error: votingSessionsError } = useVotingSessions(meeting?.code);
 
     const [userNameInput, setUserNameInput] = useState("");
-    const [userName, setUserName] = useState("");
+    const [userName, setUserName] = useState(""); // this defines if the user has joined
 
     const [speechAdminActions, setSpeechAdminActions] = useState<{ meetingCode: string, speechId: string, field: string, newValue: any, oldValue: any }[]>([]);
 
@@ -71,7 +68,13 @@ export default function MeetingPage() {
     const [proposalDescriptionInput, setProposalDescriptionInput] = useState("");
     const [isBaseProposal, setIsBaseProposal] = useState(false);
 
-    const { upcomingSpeeches, ongoingSpeeches, completedSpeeches } = useSpeeches(meeting?.code);
+    const { joined, loading: joinLoading, displayName } = useMeetingJoinStatus(meetingCode, user, userLoading, userName);
+    const dataEnabled = joined && !!meeting?.code;
+
+    const { upcomingSpeeches, ongoingSpeeches, completedSpeeches } = useSpeeches(meeting?.code, dataEnabled);
+    const { openProposals, acceptedProposals, rejectedProposals } = useProposals(meeting?.code, dataEnabled);
+    const { openVotingSessions, completedVotingSessions, loading: votingSessionsLoading, error: votingSessionsError } = useVotingSessions(meeting?.code, dataEnabled);
+    const { isAdmin: isMeetingAdmin, loading: adminLoading } = useMeetingAdmin(meeting?.code, user, userLoading);
 
     const [createVotingSessionPublicity, setCreateVotingSessionPublicity] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
     const [addBlankOption, setAddBlankOption] = useState(true);
@@ -80,7 +83,7 @@ export default function MeetingPage() {
 
     const [selectedProposalIds, setSelectedProposalIds] = useState<Set<string>>(() => new Set());
 
-    const rtdbEnabled = !!user && !userLoading && userName.trim() !== "" && !!meeting?.code;
+    const rtdbEnabled = !!user && !userLoading && userName.trim() !== "" && dataEnabled;
 
     useRtdbPresence(meeting?.code, userName, rtdbEnabled);
     const { online } = useOnlineNowRtdb(meeting?.code, 60_000, rtdbEnabled);
@@ -88,7 +91,7 @@ export default function MeetingPage() {
     useEffect(() => {
         console.log("User loading state:", userLoading, "user:", user, "meeting:", meeting?.requireLogin);
         if (!userLoading && user && user.isAnonymous && meeting && meeting.requireLogin) {
-            router.push('/login?redirect=/new');
+            router.push("/login?redirect=/new");
         }
     }, [user, userLoading, router, meeting]);
 
@@ -115,29 +118,10 @@ export default function MeetingPage() {
     }, [openProposals]);
 
     useEffect(() => {
-        if (!meetingCode) return;
-        if (userLoading || !user) return;
-
-        const ref = doc(db, "meetings", meetingCode, "participants", user.uid);
-
-        const unsub = onSnapshot(
-            ref,
-            (snap) => {
-                if (!snap.exists()) return;
-                const name = String((snap.data() as any)?.name ?? "").trim();
-                if (!name) return;
-
-                // Prefill input if user has not joined yet
-                setUserNameInput((prev) => (prev.trim() ? prev : name));
-
-                // Optional: auto-join if you want
-                // setUserName((prev) => (prev ? prev : name));
-            },
-            (e) => console.error("participants/{uid} read failed:", e)
-        );
-
-        return () => unsub();
-    }, [meetingCode, user, userLoading]);
+        if (displayName) {
+            setUserNameInput(displayName);
+        }
+    }, [displayName]);
 
     useEffect(() => {
         // select the name input field on load
@@ -164,8 +148,8 @@ export default function MeetingPage() {
     const focusStartNext = () => {
         // Prefer a stable selector you control
         const el =
-            document.querySelector<HTMLButtonElement>('[data-start-next] button') ??
-            document.querySelector<HTMLButtonElement>('button#start-next-button');
+            document.querySelector<HTMLButtonElement>("[data-start-next] button") ??
+            document.querySelector<HTMLButtonElement>("button#start-next-button");
 
         el?.focus();
     };
@@ -218,7 +202,7 @@ export default function MeetingPage() {
                 tag === "TEXTAREA" ||
                 tag === "SELECT" ||
                 target.isContentEditable ||
-                target.closest('[contenteditable="true"]')
+                target.closest("[contenteditable='true']")
             ) {
                 return;
             }
@@ -255,51 +239,14 @@ export default function MeetingPage() {
         if (userLoading || !user) return;
 
         try {
-            const participantRef = doc(db, "meetings", meetingCode, "participants", user.uid);
-            const snap = await getDoc(participantRef);
+            const fn = httpsCallable(functions, "registerToMeeting");
+            await fn({ meetingCode, name: trimmed });
 
-            if (!snap.exists()) {
-                await registerWithName(trimmed);
-                return; // registerWithName already sets userName on success
-            }
-
-            const existingName = String((snap.data() as any)?.name ?? "").trim();
-            if (existingName !== trimmed) {
-                await updateMyParticipantName(trimmed);
-            }
-
-            // Join meeting UI
             setUserName(trimmed);
         } catch (err) {
             console.error("Failed to join with name:", err);
         }
     };
-
-
-    const registerWithName = async (name: string) => {
-
-        const trimmed = name.trim();
-        if (!trimmed) return;
-        if (!meetingCode) return;
-        if (userLoading || !user) return;
-
-        try {
-            const fn = httpsCallable(functions, "registerToMeeting");
-            await fn({ meetingCode, name: trimmed });
-
-            // Only set local UI state after server registration succeeded
-            setUserName(trimmed);
-        } catch (err) {
-            console.error("Registration failed:", err);
-        }
-    };
-
-    async function updateMyParticipantName(nextName: string) {
-        if (!meetingCode || !user) return;
-        const ref = doc(db, "meetings", meetingCode, "participants", user.uid);
-        await updateDoc(ref, { name: nextName.trim(), updatedAt: serverTimestamp() });
-    }
-
 
     const handleAddSpeech = async (e: React.FormEvent) => {
         try {
@@ -311,7 +258,7 @@ export default function MeetingPage() {
             if (!meeting) return;
 
 
-            const createSpeech = httpsCallable(functions, 'createSpeech');
+            const createSpeech = httpsCallable(functions, "createSpeech");
             const result = await createSpeech({
                 meetingCode: meeting.code,
                 description: speechDescriptionInput,
@@ -414,6 +361,7 @@ export default function MeetingPage() {
             await createVotingSessionFn({
                 meetingCode: meeting.code,
                 proposalIds: [proposalId],
+                votePublicity: createVotingSessionPublicity,
             });
 
             setQuickVoteText("");
@@ -424,6 +372,23 @@ export default function MeetingPage() {
             setQuickVoteSaving(false);
         }
     };
+
+    const handleCreateSingleYesNoVote = async () => {
+        if (!meeting) return;
+        if (selectedProposalIds.size !== 1) return;
+
+        const proposalId = Array.from(selectedProposalIds)[0];
+        try {
+            const createVotingSessionFn = httpsCallable(functions, "createVotingSession");
+            await createVotingSessionFn({
+                meetingCode: meeting.code,
+                proposalIds: [proposalId],
+                votePublicity: createVotingSessionPublicity,
+            });
+        } catch (e: any) {
+            console.error("Error creating single yes/no vote:", e);
+        }
+    }
 
 
     const handleCompleteOngoingAndStartNext = async () => {
@@ -458,7 +423,7 @@ export default function MeetingPage() {
         try {
             if (!meeting) return;
             console.log("Adding proposal:", proposalDescriptionInput, "by user:", userName);
-            const addProposal = httpsCallable(functions, 'createProposal');
+            const addProposal = httpsCallable(functions, "createProposal");
             const result = await addProposal({
                 meetingCode: meeting.code,
                 description: proposalDescriptionInput,
@@ -481,7 +446,7 @@ export default function MeetingPage() {
         try {
             if (!meeting) return;
             console.log("Creating voting session for proposals:", proposalIds, "by user:", userName);
-            const createVotingSession = httpsCallable(functions, 'createVotingSession');
+            const createVotingSession = httpsCallable(functions, "createVotingSession");
             const result = await createVotingSession({
                 meetingCode: meeting.code,
                 proposalIds,
@@ -605,7 +570,6 @@ export default function MeetingPage() {
             }
         }
         else if (session.type === "ONE-OF-PROPOSALS") {
-
             // calculate winning proposal id from votes
             const proposalVotesCount: Record<string, number> = {};
             session.voteOptions.forEach(option => {
@@ -672,7 +636,7 @@ export default function MeetingPage() {
     const loginScreen = (
         <div className="flex justify-center items-center flex-col w-full text-foreground bg-background h-full gap-4">
             <Form onSubmit={handleJoinWithName} validationBehavior="native"
-                className={'flex justify-center items-left flex-col w-full text-foreground bg-background h-dhv gap-4 w-3/4 lg:w-1/4'}
+                className={"flex justify-center items-left flex-col w-full text-foreground bg-background h-dhv gap-4 w-3/4 lg:w-1/4"}
             >
                 <h2 className="text-2xl lg:text-3xl font-semibold">Syötä nimesi ennen kokoukseen liittymistä</h2>
                 <Label htmlFor="user-name-input">Nimi</Label>
@@ -820,11 +784,21 @@ export default function MeetingPage() {
             </div>
             {isMeetingAdmin && (
                 <div className="p-3 border-t border-border min-h-[72px] flex items-center">
-                    {selectedProposalIds.size > 0 ? (
+                    {selectedProposalIds.size >= 2 && (
                         <Button onPress={() => setIsVotingSessionModalOpen(true)} variant="secondary">
                             Avaa äänestys näistä ehdotuksista ({selectedProposalIds.size})
                         </Button>
-                    ) : (
+                    )}
+                    {selectedProposalIds.size === 1 && (
+                        <Button
+                            onPress={() => {
+                                handleCreateSingleYesNoVote();
+                            }}
+                            variant="secondary">
+                            Avaa kyllä/ei -äänestys tästä ehdotuksesta
+                        </Button>
+                    )}
+                    {selectedProposalIds.size === 0 && (
                         <Button
                             variant="secondary"
                             onPress={() => setIsQuickVoteOpen(true)}
@@ -833,12 +807,13 @@ export default function MeetingPage() {
                         </Button>
                     )}
                 </div>
-            )}
-        </div>
+            )
+            }
+        </div >
     );
 
     const ongoingAndCompletedSpeechesColumn = (
-        <div className={`flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden ${ownOngoing ? 'bg-green-900' : ''}`}>
+        <div className={`flex flex-1 min-w-0 min-h-0 flex-col border border-border overflow-hidden ${ownOngoing ? "bg-green-900" : ""}`}>
             <h3 className="text-xl font-semibold p-3 border-b border-border shrink-0">
                 Käynnissä oleva puheenvuoro
             </h3>
@@ -1137,11 +1112,11 @@ export default function MeetingPage() {
                                         </Surface>
                                     </Modal.Body>
                                     <Modal.Footer>
-                                        <Button variant="danger" onPress={() => setIsProposalFormOpen(false)}>
+                                        <Button variant="outline" onPress={() => setIsProposalFormOpen(false)}>
                                             Sulje
                                         </Button>
 
-                                        <Button variant="primary" type="submit" form="proposalForm">
+                                        <Button variant="primary" type="submit" form="proposalForm" isDisabled={!proposalDescriptionInput.trim()}>
                                             Lisää
                                         </Button>
                                     </Modal.Footer>
@@ -1195,7 +1170,7 @@ export default function MeetingPage() {
                                                     </div>
                                                 )}
                                             </div>
-                                            <RadioGroup variant="secondary" value={createVotingSessionPublicity} onChange={(value) => setCreateVotingSessionPublicity(value as 'PUBLIC' | 'PRIVATE')} className="mt-4">
+                                            <RadioGroup variant="secondary" value={createVotingSessionPublicity} onChange={(value) => setCreateVotingSessionPublicity(value as "PUBLIC" | "PRIVATE")} className="mt-4">
                                                 <Label />
                                                 <Description />
                                                 <Radio value={"PUBLIC"}>

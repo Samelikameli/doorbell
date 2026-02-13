@@ -71,21 +71,13 @@ service cloud.firestore {
               ? (s.data.open == true)
               : false;
           }
-          allow read: if (request.auth != null && request.auth.uid == resource.data.voterUid) || !votingIsOpen();
-          allow get: if true;
+          allow read: if (request.auth != null && request.auth.uid == resource.data.voterUid) || (request.auth != null && request.auth.uid == voteId) || !votingIsOpen();
           allow create: if false;
-          allow update, delete: if false;
+          allow write: if false;
         }
 
         match /voters/{voterId} {
-          function votingIsOpen() {
-            let s = get(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId));
-            return exists(/databases/$(database)/documents/meetings/$(meetingId)/votingSessions/$(votingSessionId))
-              ? (s.data.open == true)
-              : false;
-          }
-          allow list: if !votingIsOpen();
-          allow get: if true;
+          allow read: if true;
           allow write: if false;
         }
       }

@@ -35,7 +35,7 @@ function mapSpeech(docSnap: any): Speech {
   } as Speech;
 }
 
-export function useSpeeches(meetingCode: string | null | undefined): UseSpeechesResult {
+export function useSpeeches(meetingCode: string | null | undefined, enabled: boolean): UseSpeechesResult {
   const [upcomingSpeeches, setUpcomingSpeeches] = useState<Speech[]>([]);
   const [ongoingSpeeches, setOngoingSpeeches] = useState<Speech[]>([]);
   const [completedSpeeches, setCompletedSpeeches] = useState<Speech[]>([]);
@@ -43,7 +43,7 @@ export function useSpeeches(meetingCode: string | null | undefined): UseSpeeches
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!meetingCode) {
+    if (!meetingCode || !enabled) {
       setUpcomingSpeeches([]);
       setOngoingSpeeches([]);
       setCompletedSpeeches([]);
@@ -121,7 +121,7 @@ export function useSpeeches(meetingCode: string | null | undefined): UseSpeeches
       unsubOngoing();
       unsubCompleted();
     };
-  }, [meetingCode]);
+  }, [meetingCode, enabled]);
 
   return {
     upcomingSpeeches,

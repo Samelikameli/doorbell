@@ -29,6 +29,7 @@ Esitykset (Proposals)
  - Äänestystulokset näytetään reaaliajassa
 
 TODO:
+- tiebreaker: arpa ratkaisee tasatilanteen suljetussa äänestyksessä, avoimessa puheenjohtaja
 - parempi käyttäjähallinta: ennalta määrätyt kutsulistat kokouksiin
 - äänioikeuksien hallinta
 - esityslistan syöttö kokoukselle

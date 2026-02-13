@@ -1,3 +1,4 @@
+// hooks/useVotingSessions.ts
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -5,13 +6,16 @@ import {
   collection,
   doc,
   getDoc,
+  limit,
   onSnapshot,
   orderBy,
   query,
   Unsubscribe,
   where,
 } from "firebase/firestore";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { db } from "@/firebase";
+
 import type {
   Proposal,
   StoredVoteOption,
@@ -20,7 +24,6 @@ import type {
   HydratedVoteOption,
   Voter,
 } from "@/types";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 type UseVotingSessionsResult = {
   openVotingSessions: VotingSession[];
@@ -31,7 +34,7 @@ type UseVotingSessionsResult = {
 
 type VotingSessionDoc = Omit<
   VotingSession,
-  "votingSessionId" | "voteOptions" | "votes" | "hasVoted" | "myVoteOptionId"
+  "votingSessionId" | "voteOptions" | "votes" | "hasVoted" | "myVoteOptionId" | "voters"
 > & {
   voteOptions: StoredVoteOption[];
 };
@@ -49,6 +52,13 @@ type VoterDoc = {
   createdAt?: any;
 };
 
+type SessionBase = Omit<
+  VotingSession,
+  "voteOptions" | "votes" | "hasVoted" | "myVoteOptionId" | "voters"
+> & {
+  storedVoteOptions: StoredVoteOption[];
+};
+
 function toDateMaybe(ts: any): Date {
   return ts?.toDate?.() ?? new Date(0);
 }
@@ -56,9 +66,9 @@ function toDateMaybe(ts: any): Date {
 function mapVote(sessionId: string, data: VoteDoc): Vote {
   return {
     votingSessionId: sessionId,
-    voterUid: data.voterUid,
+    voterUid: data.voterUid, // PUBLIC: set, PRIVATE: undefined by design
     voteOptionId: data.voteOptionId,
-    voterName: data.voterName,
+    voterName: data.voterName, // PUBLIC: set, PRIVATE: undefined by design
   };
 }
 
@@ -72,9 +82,7 @@ function mapVoter(sessionId: string, voterId: string, data: VoterDoc): Voter {
 
 function collectProposalIdsFromOptions(opts: StoredVoteOption[]): string[] {
   const ids: string[] = [];
-  for (const o of opts) {
-    if (o.type === "PROPOSAL") ids.push(o.proposalId);
-  }
+  for (const o of opts) if (o.type === "PROPOSAL") ids.push(o.proposalId);
   return Array.from(new Set(ids));
 }
 
@@ -110,24 +118,10 @@ function hydrateVoteOptions(
   return result;
 }
 
-type SessionBase = Omit<
-  VotingSession,
-  "voteOptions" | "votes" | "hasVoted" | "myVoteOptionId"
-> & {
-  storedVoteOptions: StoredVoteOption[];
-};
-
-type MyVoteState = { hasVoted: boolean; myVoteOptionId?: string };
-
 function receiptKey(meetingCode: string, sessionId: string) {
   return `privateVoteReceipt:${meetingCode}:${sessionId}`;
 }
 
-/**
- * PRIVATE completed requirement "fetch what I have voted":
- * This requires a receipt id somewhere. This implementation reads it from localStorage.
- * You must set it when castVote returns { privateVoterReceipt }.
- */
 function getPrivateReceiptId(meetingCode: string, sessionId: string): string | null {
   try {
     return localStorage.getItem(receiptKey(meetingCode, sessionId));
@@ -136,7 +130,10 @@ function getPrivateReceiptId(meetingCode: string, sessionId: string): string | n
   }
 }
 
-export function useVotingSessions(meetingCode: string | null | undefined): UseVotingSessionsResult {
+export function useVotingSessions(
+  meetingCode: string | null | undefined,
+  enabled: boolean
+): UseVotingSessionsResult {
   const [openVotingSessions, setOpenVotingSessions] = useState<VotingSession[]>([]);
   const [completedVotingSessions, setCompletedVotingSessions] = useState<VotingSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -144,33 +141,30 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
 
   const [uid, setUid] = useState<string | null>(null);
 
-  useEffect(() => {
-    const auth = getAuth();
-    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
-    return () => unsub();
-  }, []);
-
   const sessionsBaseRef = useRef<SessionBase[]>([]);
-
-  // Votes and voters for completed sessions (and votes for completed private)
   const votesBySessionRef = useRef<Map<string, Vote[]>>(new Map());
-  const voteUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
-
   const votersBySessionRef = useRef<Map<string, Voter[]>>(new Map());
+
+  const voteUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
   const voterUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
 
-  // My state:
-  // - hasVoted always from /voters/{uid} in OPEN sessions (public + private)
-  // - myVoteOptionId:
-  //    - PUBLIC open/completed: query votes where voterUid == uid
-  //    - PRIVATE completed: get vote by receipt id from localStorage
-  const myStateBySessionRef = useRef<Map<string, MyVoteState>>(new Map());
-  const myVoterDocUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
-  const myPublicVoteQueryUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
-
-  // Proposal hydration
   const proposalsByIdRef = useRef<Map<string, Proposal>>(new Map());
   const proposalUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
+
+  // Used for:
+  // - PUBLIC + OPEN: myVoteOptionId via query (voterUid == uid)
+  // - PRIVATE (open or closed): myVoteOptionId via receipt doc id
+  const myVoteOptionIdRef = useRef<Map<string, string | undefined>>(new Map());
+  const myVoteUnsubsRef = useRef<Map<string, Unsubscribe>>(new Map());
+
+  useEffect(() => {
+    if (!enabled) {
+      setUid(null);
+      return;
+    }
+    const auth = getAuth();
+    return onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
+  }, [enabled]);
 
   const cleanupAll = () => {
     voteUnsubsRef.current.forEach((u) => u());
@@ -181,13 +175,9 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
     voterUnsubsRef.current.clear();
     votersBySessionRef.current.clear();
 
-    myVoterDocUnsubsRef.current.forEach((u) => u());
-    myVoterDocUnsubsRef.current.clear();
-
-    myPublicVoteQueryUnsubsRef.current.forEach((u) => u());
-    myPublicVoteQueryUnsubsRef.current.clear();
-
-    myStateBySessionRef.current.clear();
+    myVoteUnsubsRef.current.forEach((u) => u());
+    myVoteUnsubsRef.current.clear();
+    myVoteOptionIdRef.current.clear();
 
     proposalUnsubsRef.current.forEach((u) => u());
     proposalUnsubsRef.current.clear();
@@ -199,9 +189,33 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
   const rehydrateAndSet = () => {
     const sessions: VotingSession[] = sessionsBaseRef.current.map((base) => {
       const voteOptions = hydrateVoteOptions(base.storedVoteOptions, proposalsByIdRef.current);
-      const my = myStateBySessionRef.current.get(base.votingSessionId) ?? { hasVoted: false };
-      const votes = votesBySessionRef.current.get(base.votingSessionId) ?? [];
+
       const voters = votersBySessionRef.current.get(base.votingSessionId) ?? [];
+      const votes = votesBySessionRef.current.get(base.votingSessionId) ?? [];
+
+      const hasVoted = !!uid && voters.some((v) => String(v.voterUid ?? "").trim() === uid);
+
+      // myVoteOptionId rules:
+      // - PUBLIC + OPEN: from myVoteOptionIdRef (query)
+      // - PUBLIC + CLOSED: derive from full votes list (no extra query)
+      // - PRIVATE: from receipt doc id (myVoteOptionIdRef), if available
+      let myVoteOptionId: string | undefined;
+
+      if (base.votePublicity === "PUBLIC") {
+        if (base.open === false && uid) {
+          myVoteOptionId = votes.find((v) => v.voterUid === uid)?.voteOptionId;
+        } else {
+          myVoteOptionId = myVoteOptionIdRef.current.get(base.votingSessionId);
+        }
+      } else {
+        myVoteOptionId = myVoteOptionIdRef.current.get(base.votingSessionId);
+      }
+
+      // Access model:
+      // - OPEN: voters visible, votes hidden (except "my own vote" for PUBLIC via query)
+      // - CLOSED: voters + votes visible for everyone
+      const includeVotes = base.open === false;
+      const includeVoters = true;
 
       return {
         label: base.label,
@@ -212,29 +226,14 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
         closedAt: base.closedAt,
         closedBy: base.closedBy,
         votePublicity: base.votePublicity,
-        voteOptions,
         proposalIds: base.proposalIds,
+        voteOptions,
 
-        // Matrix:
-        // - Public open: no all-votes list (avoid permissions + intended privacy while open)
-        // - Public completed: include all votes
-        // - Private open: no votes
-        // - Private completed: include all votes
-        votes:
-          (base.votePublicity === "PUBLIC" && base.open === false) ||
-            (base.votePublicity === "PRIVATE" && base.open === false)
-            ? votes
-            : [],
+        votes: includeVotes ? votes : [],
+        voters: includeVoters ? voters : [],
 
-        // UI fields
-        hasVoted: my.hasVoted,
-        myVoteOptionId: my.myVoteOptionId,
-
-        // Non-typed extra for completed public sessions
-        voters:
-          base.votePublicity === "PUBLIC" && base.open === false
-            ? voters
-            : [],
+        hasVoted,
+        myVoteOptionId,
       };
     });
 
@@ -247,7 +246,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
   }, []);
 
   useEffect(() => {
-    if (!meetingCode) {
+    if (!meetingCode || !enabled) {
       setOpenVotingSessions([]);
       setCompletedVotingSessions([]);
       setLoading(false);
@@ -266,7 +265,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
     const unsubscribeSessions = onSnapshot(
       sessionsQ,
       { includeMetadataChanges: true },
-      async (qs) => {
+      (qs) => {
         const bases: SessionBase[] = [];
 
         qs.forEach((d) => {
@@ -282,7 +281,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
             closedBy: data.closedBy,
             storedVoteOptions: Array.isArray(data.voteOptions) ? data.voteOptions : [],
             votePublicity: data.votePublicity ?? "PUBLIC",
-            proposalIds: data.proposalIds
+            proposalIds: data.proposalIds,
           });
         });
 
@@ -290,298 +289,167 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
 
         const sessionIdsNow = new Set(bases.map((b) => b.votingSessionId));
 
-        // Cleanup removed sessions
-        voteUnsubsRef.current.forEach((unsub, sessionId) => {
-          if (!sessionIdsNow.has(sessionId)) {
-            unsub();
-            voteUnsubsRef.current.delete(sessionId);
-            votesBySessionRef.current.delete(sessionId);
-          }
+        const cleanupMissing = (
+          unsubs: Map<string, Unsubscribe>,
+          dataMap?: Map<string, any>,
+          extraCleanup?: (sessionId: string) => void
+        ) => {
+          unsubs.forEach((unsub, sessionId) => {
+            if (!sessionIdsNow.has(sessionId)) {
+              unsub();
+              unsubs.delete(sessionId);
+              dataMap?.delete(sessionId);
+              extraCleanup?.(sessionId);
+            }
+          });
+        };
+
+        cleanupMissing(voteUnsubsRef.current, votesBySessionRef.current);
+        cleanupMissing(voterUnsubsRef.current, votersBySessionRef.current);
+        cleanupMissing(myVoteUnsubsRef.current, undefined, (sessionId) => {
+          myVoteOptionIdRef.current.delete(sessionId);
         });
 
-        voterUnsubsRef.current.forEach((unsub, sessionId) => {
-          if (!sessionIdsNow.has(sessionId)) {
-            unsub();
-            voterUnsubsRef.current.delete(sessionId);
-            votersBySessionRef.current.delete(sessionId);
-          }
-        });
-
-        myVoterDocUnsubsRef.current.forEach((unsub, sessionId) => {
-          if (!sessionIdsNow.has(sessionId)) {
-            unsub();
-            myVoterDocUnsubsRef.current.delete(sessionId);
-            myStateBySessionRef.current.delete(sessionId);
-          }
-        });
-
-        myPublicVoteQueryUnsubsRef.current.forEach((unsub, sessionId) => {
-          if (!sessionIdsNow.has(sessionId)) {
-            unsub();
-            myPublicVoteQueryUnsubsRef.current.delete(sessionId);
-            const cur = myStateBySessionRef.current.get(sessionId);
-            if (cur) myStateBySessionRef.current.set(sessionId, { hasVoted: cur.hasVoted });
-          }
-        });
-
-        // Attach per-session listeners following your matrix
+        // Ensure per-session listeners using the access model
         for (const b of bases) {
           const sessionId = b.votingSessionId;
-
-          const isPublic = b.votePublicity === "PUBLIC";
-          const isPrivate = b.votePublicity === "PRIVATE";
           const isOpen = b.open === true;
-          const isCompleted = b.open === false;
+          const isClosed = b.open === false;
 
-          // 1) Public + Open: fetch hasVoted and myVoteOptionId
-          // 2) Private + Open: fetch hasVoted
-          // We implement hasVoted for all OPEN sessions using /voters/{uid}
-          if (uid && isOpen && !myVoterDocUnsubsRef.current.has(sessionId)) {
-            const voterDocRef = doc(db, "meetings", meetingCode, "votingSessions", sessionId, "voters", uid);
+          // VOTERS: always subscribe (open and closed), for everyone
+          if (!voterUnsubsRef.current.has(sessionId)) {
+            const votersCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "voters");
+            const votersQ = query(votersCol);
 
-            const unsubVoter = onSnapshot(
-              voterDocRef,
+            const unsubVoters = onSnapshot(
+              votersQ,
               { includeMetadataChanges: true },
-              (snap) => {
-                const hasVoted = snap.exists();
-                const prev = myStateBySessionRef.current.get(sessionId);
-
-                myStateBySessionRef.current.set(sessionId, {
-                  hasVoted,
-                  myVoteOptionId: prev?.myVoteOptionId,
+              (votersSnap) => {
+                const voters: Voter[] = [];
+                votersSnap.forEach((vd) => {
+                  voters.push(mapVoter(sessionId, vd.id, vd.data({ serverTimestamps: "estimate" })));
                 });
-
-                // Public + Open: also subscribe to my vote query when hasVoted
-                if (isPublic) {
-                  if (hasVoted && !myPublicVoteQueryUnsubsRef.current.has(sessionId)) {
-                    const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
-                    const myVoteQ = query(votesCol, where("voterUid", "==", uid));
-
-                    const unsubMyVote = onSnapshot(
-                      myVoteQ,
-                      { includeMetadataChanges: true },
-                      (voteSnap) => {
-                        const first = voteSnap.docs[0];
-                        const myVoteOptionId = first?.data()?.voteOptionId as string | undefined;
-
-                        const cur = myStateBySessionRef.current.get(sessionId) ?? { hasVoted };
-                        myStateBySessionRef.current.set(sessionId, {
-                          hasVoted: cur.hasVoted,
-                          myVoteOptionId,
-                        });
-
-                        rehydrateAndSet();
-                      },
-                      (err) => {
-                        setError(err as Error);
-                      }
-                    );
-
-                    myPublicVoteQueryUnsubsRef.current.set(sessionId, unsubMyVote);
-                  }
-
-                  if (!hasVoted && myPublicVoteQueryUnsubsRef.current.has(sessionId)) {
-                    myPublicVoteQueryUnsubsRef.current.get(sessionId)?.();
-                    myPublicVoteQueryUnsubsRef.current.delete(sessionId);
-                    const cur = myStateBySessionRef.current.get(sessionId);
-                    if (cur) myStateBySessionRef.current.set(sessionId, { hasVoted: cur.hasVoted });
-                  }
-                }
-
+                votersBySessionRef.current.set(sessionId, voters);
                 rehydrateAndSet();
               },
-              (err) => {
-                setError(err as Error);
-              }
+              (err) => setError(err as Error)
             );
 
-            myVoterDocUnsubsRef.current.set(sessionId, unsubVoter);
+            voterUnsubsRef.current.set(sessionId, unsubVoters);
           }
 
-          // Completed sessions: the open-voter-doc listener is not needed.
-          // It is safe to leave it; but you asked for specific behavior. We turn it off when completed.
-          if (isCompleted && myVoterDocUnsubsRef.current.has(sessionId)) {
-            myVoterDocUnsubsRef.current.get(sessionId)?.();
-            myVoterDocUnsubsRef.current.delete(sessionId);
-          }
-
-          // Public + Completed: fetch myVoteOptionId + all votes + all voters
-          if (uid && isPublic && isCompleted) {
-            // my vote (public) query, even after completion
-            if (!myPublicVoteQueryUnsubsRef.current.has(sessionId)) {
-              const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
-              const myVoteQ = query(votesCol, where("voterUid", "==", uid));
-
-              const unsubMyVote = onSnapshot(
-                myVoteQ,
-                { includeMetadataChanges: true },
-                (voteSnap) => {
-                  const first = voteSnap.docs[0];
-                  const myVoteOptionId = first?.data()?.voteOptionId as string | undefined;
-
-                  const cur = myStateBySessionRef.current.get(sessionId) ?? { hasVoted: false };
-                  myStateBySessionRef.current.set(sessionId, {
-                    hasVoted: cur.hasVoted, // hasVoted may remain false for guests; acceptable
-                    myVoteOptionId,
-                  });
-
-                  rehydrateAndSet();
-                },
-                (err) => {
-                  setError(err as Error);
-                }
-              );
-
-              myPublicVoteQueryUnsubsRef.current.set(sessionId, unsubMyVote);
+          // PUBLIC + OPEN: allow user to read their own vote (query voterUid == uid)
+          if (isOpen) {
+            // Ensure we never subscribe to ALL votes while open
+            if (voteUnsubsRef.current.has(sessionId)) {
+              voteUnsubsRef.current.get(sessionId)?.();
+              voteUnsubsRef.current.delete(sessionId);
+              votesBySessionRef.current.delete(sessionId);
             }
 
-            // all votes
-            if (!voteUnsubsRef.current.has(sessionId)) {
-              const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
-              const votesQ = query(votesCol);
+            const isPublic = b.votePublicity === "PUBLIC";
+            if (isPublic && uid) {
+              if (!myVoteUnsubsRef.current.has(sessionId)) {
+                const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
+                const myVoteQ = query(votesCol, where("voterUid", "==", uid), limit(1));
 
-              const unsubVotes = onSnapshot(
-                votesQ,
-                { includeMetadataChanges: true },
-                (votesSnap) => {
-                  const votes: Vote[] = [];
-                  votesSnap.forEach((vd) => votes.push(mapVote(sessionId, vd.data({ serverTimestamps: "estimate" }) as VoteDoc)));
-                  votesBySessionRef.current.set(sessionId, votes);
-                  rehydrateAndSet();
-                },
-                (err) => {
-                  setError(err as Error);
-                }
-              );
+                const unsubMyVote = onSnapshot(
+                  myVoteQ,
+                  { includeMetadataChanges: true },
+                  (snap) => {
+                    const first = snap.docs[0];
+                    const myVoteOptionId = first?.data()?.voteOptionId as string | undefined;
+                    myVoteOptionIdRef.current.set(sessionId, myVoteOptionId);
+                    rehydrateAndSet();
+                  },
+                  (err) => setError(err as Error)
+                );
 
-              voteUnsubsRef.current.set(sessionId, unsubVotes);
-            }
-
-            // all voters
-            if (!voterUnsubsRef.current.has(sessionId)) {
-              const votersCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "voters");
-              const votersQ = query(votersCol);
-
-              const unsubVoters = onSnapshot(
-                votersQ,
-                { includeMetadataChanges: true },
-                (votersSnap) => {
-                  const voters: Voter[] = [];
-                  votersSnap.forEach((vd) => {
-                    voters.push(mapVoter(sessionId, vd.id, vd.data({ serverTimestamps: "estimate" })));
-                  });
-                  votersBySessionRef.current.set(sessionId, voters);
-                  rehydrateAndSet();
-                },
-                (err) => {
-                  setError(err as Error);
-                }
-              );
-
-              voterUnsubsRef.current.set(sessionId, unsubVoters);
-            }
-          }
-
-          // Private + Completed: fetch myVoteOptionId + all votes, but not voters
-          if (uid && isPrivate && isCompleted) {
-            // Do not subscribe voters list
-            if (voterUnsubsRef.current.has(sessionId)) {
-              voterUnsubsRef.current.get(sessionId)?.();
-              voterUnsubsRef.current.delete(sessionId);
-              votersBySessionRef.current.delete(sessionId);
-            }
-
-            // All votes
-            if (!voteUnsubsRef.current.has(sessionId)) {
-              const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
-              const votesQ = query(votesCol);
-
-              const unsubVotes = onSnapshot(
-                votesQ,
-                { includeMetadataChanges: true },
-                (votesSnap) => {
-                  const votes: Vote[] = [];
-                  votesSnap.forEach((vd) => votes.push(mapVote(sessionId, vd.data({ serverTimestamps: "estimate" }) as VoteDoc)));
-                  votesBySessionRef.current.set(sessionId, votes);
-                  rehydrateAndSet();
-                },
-                (err) => {
-                  setError(err as Error);
-                }
-              );
-
-              voteUnsubsRef.current.set(sessionId, unsubVotes);
-            }
-
-            // My vote (private) by receipt id
-            // This cannot be done by query if private votes do not store voterUid.
-            // It requires a receipt stored locally (or some other private mapping).
-            const receiptId = getPrivateReceiptId(meetingCode, sessionId);
-            if (receiptId) {
-              const voteDocRef = doc(db, "meetings", meetingCode, "votingSessions", sessionId, "votes", receiptId);
-
-              // One-time read is enough (vote never changes). If you prefer live, replace with onSnapshot.
-              getDoc(voteDocRef)
-                .then((snap) => {
-                  if (!snap.exists()) return;
-                  const v = snap.data({ serverTimestamps: "estimate" }) as VoteDoc;
-                  const myVoteOptionId = v?.voteOptionId as string | undefined;
-
-                  const cur = myStateBySessionRef.current.get(sessionId) ?? { hasVoted: false };
-                  myStateBySessionRef.current.set(sessionId, {
-                    hasVoted: cur.hasVoted,
-                    myVoteOptionId,
-                  });
-
-                  rehydrateAndSet();
-                })
-                .catch((err) => {
-                  setError(err as Error);
-                });
+                myVoteUnsubsRef.current.set(sessionId, unsubMyVote);
+              }
             } else {
-              // No receipt: cannot fetch my vote for private sessions.
-              const cur = myStateBySessionRef.current.get(sessionId) ?? { hasVoted: false };
-              myStateBySessionRef.current.set(sessionId, { hasVoted: cur.hasVoted });
+              // Not public or no uid: ensure no myVote query is active
+              if (myVoteUnsubsRef.current.has(sessionId)) {
+                myVoteUnsubsRef.current.get(sessionId)?.();
+                myVoteUnsubsRef.current.delete(sessionId);
+              }
+              myVoteOptionIdRef.current.delete(sessionId);
             }
 
-            // hasVoted is not required by your matrix for private completed, but keep it if already present
+            // PRIVATE + OPEN: optional my vote by receipt (works with your CF return)
+            if (b.votePublicity === "PRIVATE") {
+              const receiptId = getPrivateReceiptId(meetingCode, sessionId);
+              if (receiptId) {
+                const voteDocRef = doc(db, "meetings", meetingCode, "votingSessions", sessionId, "votes", receiptId);
+                getDoc(voteDocRef)
+                  .then((snap) => {
+                    if (!snap.exists()) return;
+                    const v = snap.data({ serverTimestamps: "estimate" }) as VoteDoc;
+                    myVoteOptionIdRef.current.set(sessionId, v?.voteOptionId);
+                    rehydrateAndSet();
+                  })
+                  .catch((err) => setError(err as Error));
+              }
+            }
           }
 
-          // Public + Open: do NOT subscribe to all votes or all voters
-          if (isPublic && isOpen) {
-            if (voteUnsubsRef.current.has(sessionId)) {
-              voteUnsubsRef.current.get(sessionId)?.();
-              voteUnsubsRef.current.delete(sessionId);
-              votesBySessionRef.current.delete(sessionId);
+          // CLOSED: subscribe to ALL votes for everyone
+          if (isClosed) {
+            // No need for the open-only myVote query once closed (we derive from full votes)
+            if (myVoteUnsubsRef.current.has(sessionId)) {
+              myVoteUnsubsRef.current.get(sessionId)?.();
+              myVoteUnsubsRef.current.delete(sessionId);
             }
-            if (voterUnsubsRef.current.has(sessionId)) {
-              voterUnsubsRef.current.get(sessionId)?.();
-              voterUnsubsRef.current.delete(sessionId);
-              votersBySessionRef.current.delete(sessionId);
-            }
-          }
 
-          // Private + Open: do NOT subscribe to votes or voters
-          if (isPrivate && isOpen) {
-            if (voteUnsubsRef.current.has(sessionId)) {
-              voteUnsubsRef.current.get(sessionId)?.();
-              voteUnsubsRef.current.delete(sessionId);
-              votesBySessionRef.current.delete(sessionId);
+            if (!voteUnsubsRef.current.has(sessionId)) {
+              const votesCol = collection(db, "meetings", meetingCode, "votingSessions", sessionId, "votes");
+              const votesQ = query(votesCol);
+
+              const unsubVotes = onSnapshot(
+                votesQ,
+                { includeMetadataChanges: true },
+                (votesSnap) => {
+                  const votes: Vote[] = [];
+                  votesSnap.forEach((vd) => {
+                    votes.push(mapVote(sessionId, vd.data({ serverTimestamps: "estimate" }) as VoteDoc));
+                  });
+                  votesBySessionRef.current.set(sessionId, votes);
+                  rehydrateAndSet();
+                },
+                (err) => setError(err as Error)
+              );
+
+              voteUnsubsRef.current.set(sessionId, unsubVotes);
             }
-            if (voterUnsubsRef.current.has(sessionId)) {
-              voterUnsubsRef.current.get(sessionId)?.();
-              voterUnsubsRef.current.delete(sessionId);
-              votersBySessionRef.current.delete(sessionId);
+
+            // PRIVATE (closed): keep receipt-based "myVoteOptionId" (votes do not contain voterUid)
+            if (b.votePublicity === "PRIVATE") {
+              const receiptId = getPrivateReceiptId(meetingCode, sessionId);
+              if (receiptId) {
+                const voteDocRef = doc(db, "meetings", meetingCode, "votingSessions", sessionId, "votes", receiptId);
+                getDoc(voteDocRef)
+                  .then((snap) => {
+                    if (!snap.exists()) return;
+                    const v = snap.data({ serverTimestamps: "estimate" }) as VoteDoc;
+                    myVoteOptionIdRef.current.set(sessionId, v?.voteOptionId);
+                    rehydrateAndSet();
+                  })
+                  .catch((err) => setError(err as Error));
+              } else {
+                // No receipt means "myVoteOptionId" is unknown for PRIVATE
+                myVoteOptionIdRef.current.delete(sessionId);
+              }
+            } else {
+              // PUBLIC (closed): derived from votes list, no need to store
+              myVoteOptionIdRef.current.delete(sessionId);
             }
           }
         }
 
-        // Proposal hydration listeners
+        // Proposal hydration
         const neededProposalIds = new Set<string>();
         for (const b of bases) {
-          for (const pid of collectProposalIdsFromOptions(b.storedVoteOptions)) {
-            neededProposalIds.add(pid);
-          }
+          for (const pid of collectProposalIdsFromOptions(b.storedVoteOptions)) neededProposalIds.add(pid);
         }
 
         proposalUnsubsRef.current.forEach((unsub, proposalId) => {
@@ -624,9 +492,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
               proposalsByIdRef.current.set(proposalId, proposal);
               rehydrateAndSet();
             },
-            (err) => {
-              setError(err as Error);
-            }
+            (err) => setError(err as Error)
           );
 
           proposalUnsubsRef.current.set(proposalId, unsubProposal);
@@ -645,7 +511,7 @@ export function useVotingSessions(meetingCode: string | null | undefined): UseVo
       unsubscribeSessions();
       cleanupAll();
     };
-  }, [meetingCode, uid]);
+  }, [meetingCode, enabled, uid]);
 
   return { openVotingSessions, completedVotingSessions, loading, error };
 }
