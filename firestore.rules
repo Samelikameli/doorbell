@@ -11,29 +11,5 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write, update, delete: if false;
     }
-    match /submissions/{id} {
-      allow write;
-      allow read: if isAdmin();
-    }
-    match /settings/announcements {
-    	allow read;
-      allow write: if isAdmin();
-    }
-    match /settings/formAccounts {
-    	allow read;
-      allow write: if isAdmin();
-    }
-    match /settings/signatureName {
-    	allow read;
-      allow write: if isAdmin();
-    }
-    match /settings/organizationData {
-    	allow read;
-      allow write: if isAdmin();
-    }
-    match /settings/accounting {
-    	allow read: if isAdmin();
-      allow write: if isAdmin();
-    }
   }
 }

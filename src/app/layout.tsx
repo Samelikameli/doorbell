@@ -3,8 +3,8 @@
 
 import "./globals.css";
 import { Montserrat } from "next/font/google";
-import { ThemeProvider } from "@/context/ThemeContext";
-import ThemeClientWrapper from "@/components/ThemeClientWrapper";
+//import { ThemeProvider } from "@/context/ThemeContext";
+//import ThemeClientWrapper from "@/components/ThemeClientWrapper";
 import { UserProvider } from '../context/UserContext';
 const montserrat = Montserrat({ subsets: ["latin"] });
 
@@ -17,10 +17,7 @@ export default function RootLayout({
     <html lang="fi" className="dark">
       <head>
         <meta name="viewport" content="width=device-width" />
-        <title>LKS Laskutuslomake</title>
-        <meta property="og:url" content="https://lks.laskutuslomake.fi/" />
-        <meta property="og:image" content="/icon.png" />
-        <meta property="og:title" content="LKS Laskutuslomake" />
+        <title>Doorbell</title>
       </head>
       <body className={montserrat.className}>
         {process.env.NEXT_PUBLIC_ENVIRONMENT === 'development' && (
@@ -28,17 +25,11 @@ export default function RootLayout({
             <h1 className="font-bold text-lg">DEV</h1>
           </div>
         )}
-          <noscript>
-            <div>
-              <h1>Javascript ei ole päällä</h1>
-              <p>Laskutuslomake ei toimi ilman Javascriptia. Ota yhteys info@laskutuslomake.fi jos tämä aiheuttaa ongelmia.</p>
-            </div>
-          </noscript>
-
           <UserProvider>
-            <ThemeProvider>
+            {/* <ThemeProvider>
               <ThemeClientWrapper>{children}</ThemeClientWrapper>
-            </ThemeProvider>
+            </ThemeProvider> */}
+            {children}
           </UserProvider>
       </body>
     </html>

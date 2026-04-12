@@ -1,5 +1,5 @@
 {
-  "name": "laskulomake",
+  "name": "doorbell",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -11,10 +11,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@heroui/button": "^2.2.9",
-    "@heroui/system": "^2.4.6",
-    "@heroui/system-rsc": "^2.3.5",
-    "@heroui/theme": "^2.4.5",
+    "dotenv": "^17.2.3",
     "firebase": "^11.1.0",
     "firebase-functions": "^6.4.0",
     "framer-motion": "^11.16.0",
@@ -24,7 +21,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@eslint/js": "^9.33.0",
-    "@heroui/react": "^2.6.13",
+    "@types/firebase": "^2.4.32",
     "@types/node": "^20.17.12",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
